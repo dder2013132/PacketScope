@@ -1,0 +1,21 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Run PacketScope",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}\\PacketScope.exe",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "environment": [
+                {
+                    "name": "PATH",
+                    "value": "C:\\Windows\\System32\\Npcap;${env:PATH}"
+                }
+            ],
+            "externalConsole": false,
+            "preLaunchTask": "Build PacketScope"
+        }
+    ]
+}
