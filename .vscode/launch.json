@@ -2,7 +2,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Run PacketScope",
+            "name": "Run PacketScope Console",
             "type": "cppvsdbg",
             "request": "launch",
             "program": "${workspaceFolder}\\PacketScope.exe",
@@ -15,7 +15,23 @@
                 }
             ],
             "externalConsole": false,
-            "preLaunchTask": "Build PacketScope"
+            "preLaunchTask": "Build PacketScope Console"
+        },
+        {
+            "name": "Run PacketScope GUI",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}\\PacketScopeGUI.exe",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "environment": [
+                {
+                    "name": "PATH",
+                    "value": "C:\\Windows\\System32\\Npcap;${env:PATH}"
+                }
+            ],
+            "externalConsole": false,
+            "preLaunchTask": "Build PacketScope GUI"
         }
     ]
 }

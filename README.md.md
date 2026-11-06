@@ -105,9 +105,10 @@ return 0으로 프로그램 종료.
 - 현재 구조(대화에서 확인한 파일명 기준):
     PacketScope/
       src/main.c                : 전체 실행 흐름, 콘솔 사용자 입력, 결과 처리, 자원 해제
+      src/gui_main.c            : GUI 실행 진입점 (GUI 빌드용)
       src/capture.c             : 장치 탐색/출력/선택 및 캡처 API 호출
       src/parser.c              : 수신한 패킷 해석 및 출력
-      src/gui.c                 : Win32 GUI 준비 단계
+      src/gui.c                 : Win32 GUI 창, 콤보박스, 버튼 및 선택 항목 표시
       include/capture.h         : 캡처 관련 함수 선언
       include/packet_parser.h   : 패킷 분석 함수 선언
       include/gui.h             : GUI 시작 함수 선언
@@ -172,34 +173,44 @@ return 0으로 프로그램 종료.
 - Npcap이 제공한 packet data는 후속 캡처 호출 또는 핸들 종료로 무효화될 수 있으므로
   필요할 때는 유효한 동안 분석하거나 별도 메모리에 복사해야 함.
 
-12. Win32 GUI 시작(현재 최신 진행 상태)
-- 목표: 콘솔 기능을 유지하면서 별도 GUI 모듈을 만들어 PacketScope 창을 띄우기.
-- gui.h에 int run_gui(void); 선언을 작성.
-- gui.c 현재 작성 코드:
-    #include <windows.h>
-    #include "gui.h"
-
-    int run_gui(void) {
-        HINSTANCE hInstance = GetModuleHandleW(NULL);
-        WNDCLASSW wc = {0};
-        wc.hInstance = hInstance;
-        wc.lpszClassName = L"PacketScopeWindow";
-        return 0;
-    }
-- HINSTANCE: 현재 실행 파일 모듈의 핸들 타입.
-- GetModuleHandleW(NULL): 현재 프로세스의 실행 파일 모듈 핸들 취득.
-- WNDCLASSW: Win32 창 클래스에 관한 정보를 담는 구조체.
-- {0}: 구조체의 멤버를 0으로 초기화.
-- wc.hInstance: 창 클래스가 속한 모듈 핸들.
-- wc.lpszClassName: 창 클래스 이름을 지정하는 널 종료 와이드 문자열 포인터.
-- lpsz라는 명명 관례: lp = Long Pointer(역사적인 Windows 표기),
-  sz = zero-terminated string(널 종료 문자열).
-- L"PacketScopeWindow": 와이드 문자열 리터럴. Windows API의 W 버전에서 사용.
-- 창 클래스 이름과 실제 창 제목은 다름.
-- 다음 단계(아직 미구현): WndProc 메시지 처리 함수, wc.lpfnWndProc 설정,
-  RegisterClassW, CreateWindowExW, ShowWindow, GetMessage/DispatchMessage 메시지 루프.
-- 현재 GUI 함수는 창을 실제로 생성하지 않으며 main에서도 GUI 실행으로 전환하지 않았음.
-  GUI가 동작한다고 기록하지 말 것.
+12. Win32 GUI 구현 현황 (2026-11-06 확인)
+- 목표: 기존 콘솔 패킷 분석기를 유지하면서 별도의 Win32 GUI 제공.
+- gui.h: int run_gui(void); 선언.
+- gui_main.c: GUI 프로그램 진입점. gui.c의 run_gui()를 호출하는 빌드 구성.
+- gui.c의 실제 구현:
+  1) GetModuleHandleW(NULL)로 실행 모듈 핸들 획득.
+  2) WNDCLASSW의 lpfnWndProc에 WindowProc 설정, RegisterClassW로 창 클래스 등록.
+  3) CreateWindowExW로 PacketScope 메인 창(900x600) 생성.
+  4) ShowWindow, UpdateWindow로 표시하고 GetMessageW/TranslateMessage/DispatchMessageW 루프 실행.
+  5) WM_CREATE에서 Start Capture 버튼(ID 1001), 드롭다운 콤보박스(ID 1002) 생성.
+  6) find_devices(&alldevs, errbuf)로 Npcap 장치 검색.
+  7) pcap_if_t 연결 리스트를 순회해 description(없으면 name)을 CB_ADDSTRING으로 콤보박스에 추가.
+  8) CB_SETCURSEL로 첫 번째 항목을 기본 선택하고 pcap_freealldevs(alldevs) 호출.
+  9) WM_COMMAND에서 버튼 ID 1001 + BN_CLICKED를 확인해 선택 항목을 읽음.
+ 10) WM_DESTROY에서 PostQuitMessage(0)를 호출해 메시지 루프 종료.
+- 2026-11-06 실제 검증: GUI 창 표시, 어댑터 목록 표시, 항목 선택 후
+  'Selected Adapter' 메시지 박스에 선택한 설명 문자열이 정확하게 나타남.
+  예: Microsoft Wi-Fi Direct Virtual Adapter #2.
+- 현재 Start Capture 버튼은 '선택 항목 확인'까지만 구현됨.
+  GUI에서 실제 패킷 캡처를 시작하는 기능은 아직 없음.
+- 중요: 콤보박스의 표시 문자열(description)과 캡처 API에 전달할 장치 식별자(name)는 다름.
+  pcap_freealldevs() 호출 뒤 pcap_if_t 노드나 그 내부 name 포인터를 계속 사용하면 안 됨.
+- 사용 API 및 개념:
+  * GetDlgItem(hwnd, 1002): 콤보박스 핸들 조회.
+  * CB_GETCURSEL: 선택한 항목 인덱스 반환(선택 없으면 CB_ERR).
+  * CB_GETLBTEXTLEN: 선택 문자열의 길이 조회.
+  * CB_GETLBTEXT: 선택 문자열을 wchar_t 배열에 복사.
+  * wchar_t adapterName[256]: 와이드 문자 배열. 종료 문자 공간을 위해 길이 < 256 검사.
+  * MessageBoxW(hwnd, adapterName, L"Selected Adapter", ...): 선택 항목 표시.
+  * SendMessageA(... CB_ADDSTRING ...)와 SendMessageW(... CB_GETLBTEXT ...) 사용 중.
+    유니코드 컨트롤/문자 인코딩 처리는 추후 정리할 수 있으나 현재 표시 동작은 검증됨.
+- 학습한 Win32 개념:
+  * HINSTANCE: 프로그램 모듈 핸들, GetModuleHandleW(NULL)로 획득.
+  * WNDCLASSW: 창 클래스 정의; lpfnWndProc는 메시지 처리 함수 포인터.
+  * L"...": Windows W API에서 사용하는 와이드 문자열 리터럴.
+  * WM_CREATE: 창 생성 중 발생하므로 ShowWindow() 이전에 처리될 수 있음.
+  * WM_COMMAND/BN_CLICKED: 버튼 클릭 등 컨트롤 이벤트 처리.
+  * 문자열 버퍼는 임시 저장 공간이며 C에는 Java의 String 기본 자료형이 없음.
 
 13. 기존 기록의 정정 / 주의점
 - [원본 4번] 노드 이동 횟수는 입력 num번이 아니라 num-1번(1부터 시작하는 번호 기준).
@@ -215,9 +226,48 @@ return 0으로 프로그램 종료.
 - [추가 주의] 패킷 수신에 실패(-1)했는데도 마지막에 return 0을 실행하는 구조는
   종료 코드상 성공으로 보일 수 있으므로 추후 오류 반환 정책을 개선할 수 있음.
 
-14. 바로 다음 할 일
-- gui.c에 WndProc(창 메시지 처리 함수) 추가.
-- WNDCLASSW의 lpfnWndProc 설정 뒤 창 클래스 등록 및 실제 창 생성 기능 순차 구현.
-- 기존 CLI 캡처 프로그램은 그대로 유지하고 GUI 기능을 작게 나눠 검증.
-- 새 GUI 소스를 빌드에 포함할 때 기존 include 경로/연결 라이브러리 설정 점검.
-- 장기적으로 printf() 중심 parser 결과를 구조체 등 GUI에서 재사용 가능한 데이터로 분리.
+14. 바로 다음 할 일 (2026-11-06 기준)
+- [완료] 별도 GUI 실행 파일을 빌드하고 창 표시.
+- [완료] Npcap 어댑터 목록을 GUI 콤보박스에 표시.
+- [완료] 선택 항목 인덱스를 읽고 선택한 설명 문자열을 메시지 박스로 출력.
+- [다음] CB_ADDSTRING의 반환 인덱스와 CB_SETITEMDATA/CB_GETITEMDATA를 활용해
+  콤보박스의 각 항목과 실제 장치 식별자(current->name)를 연결할 방법 설계.
+  문자열은 별도로 복사해 수명을 관리하고 WM_DESTROY에서 필요한 자원 해제.
+- [다음] Wi-Fi 등 사용자가 선택한 실제 장치 식별자를 open_capture()에 전달.
+- [다음] GUI가 멈추지 않도록 패킷 수신 루프를 UI 메시지 루프와 분리(스레드/메시지 전달 등).
+- [다음] Start/Stop Capture, 수신 결과 목록 및 패킷 상세 보기 추가.
+- [장기] printf() 중심 parser 결과를 구조체 등 GUI 재사용 가능한 데이터로 분리.
+
+15. 2026-11-06 실행 및 DLL 오류 진단 기록
+- 개발 환경: Windows 11, MSVC C17, Npcap SDK 1.17, VS Code C/C++ 디버거.
+- VS Code는 콘솔/GUI 각각 별도 빌드·디버깅 구성:
+  * Console: PacketScope.exe
+  * GUI: PacketScopeGUI.exe
+  * GUI 빌드: build.cmd gui -> gui_main.c, gui.c, capture.c 기반.
+- 현상: GUI 실행 전 창이 보이지 않고 중단점에도 도달하지 않는 것으로 보였음.
+- 실행 파일을 PowerShell에서 직접 실행하자 즉시 종료.
+- $LASTEXITCODE 결과 -1073741515 = 0xC0000135 (STATUS_DLL_NOT_FOUND).
+- 현재 터미널에 다음 PATH를 임시 추가하자 GUI가 정상 실행됨:
+    $env:PATH = "C:\Windows\System32\Npcap;$env:PATH"
+    .\PacketScopeGUI.exe
+- 원인: 직접 실행 시 Npcap 관련 DLL을 찾기 위한 검색 경로가 부족했음.
+  구체적으로 어떤 DLL에서 실패했는지는 직접 확인하지 않았으므로 단정하지 않음.
+- 이후 'Run PacketScope GUI' 디버깅 로그에서 다음 사항 확인:
+  * PacketScopeGUI.exe 로드, Symbols loaded.
+  * C:\Windows\System32\Npcap\wpcap.dll 및 Packet.dll 로드.
+  * GUI 창을 사용자가 닫은 후 종료 코드 0 (0x0).
+- 주의: 다른 시점의 디버깅 로그는 PacketScope.exe(콘솔 타깃)였음.
+  디버그 콘솔 맨 앞에 표시된 실행 파일 이름으로 현재 타깃을 확인할 수 있음.
+- launch.json에는 Npcap PATH 경로가 설정되어 있었음. 성공 사례가 있으므로
+  작동하는 빌드/실행 설정을 근거 없이 반복 수정하지 말 것.
+- 중단점/단계 실행의 정확한 동작은 별도 검증 완료로 기록하지 않음.
+- 디버그 콘솔에 SKYSEA Client View 관련 DLL 로드 로그도 확인했으나,
+  이것이 문제 원인이라는 증거는 없음. 관련 소프트웨어를 수정하지 않음.
+
+16. 현재 달성 범위와 주의 사항
+- 콘솔 버전: 실제 패킷 수신, 앞 16바이트 16진수 출력, Ethernet 형식 확인 후
+  EtherType(IPv4/ARP/IPv6 등) 분석까지 이전 기록에서 검증함.
+- GUI 버전: 창 + 장치 목록 + 선택된 장치 '설명' 표시까지 검증함.
+  GUI에서 pcap_open_live() 호출 및 실시간 패킷 표시 기능은 미구현.
+- 개발 방식: 사용자가 C 코드를 직접 작성하며, 한 단계씩 실제 동작과 오류를 확인.
+  추측으로 설정을 변경하지 않고 종료 코드/디버그 로그/실행 화면을 증거로 진단.

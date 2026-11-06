@@ -5,7 +5,15 @@ call "C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\Common7\Tools
 
 if errorlevel 1 exit /b 1
 
-REM 1. 콘솔 버전 빌드
+if /I "%~1"=="console" goto BUILD_CONSOLE
+if /I "%~1"=="gui" goto BUILD_GUI
+
+echo ERROR: Choose console or gui
+exit /b 1
+
+:BUILD_CONSOLE
+echo Building PacketScope Console...
+
 cl /nologo /W4 /utf-8 /std:c17 /Zi ^
 /I"C:\Dev\npcap-sdk-1.17\Include" ^
 /I"include" ^
@@ -13,13 +21,20 @@ cl /nologo /W4 /utf-8 /std:c17 /Zi ^
 /link /LIBPATH:"C:\Dev\npcap-sdk-1.17\Lib\x64" wpcap.lib
 
 if errorlevel 1 exit /b 1
+goto BUILD_SUCCESS
 
-REM 2. GUI 버전 빌드
+:BUILD_GUI
+echo Building PacketScope GUI...
+
 cl /nologo /W4 /utf-8 /std:c17 /Zi ^
+/I"C:\Dev\npcap-sdk-1.17\Include" ^
 /I"include" ^
-/Fe:PacketScopeGUI.exe src\gui_main.c src\gui.c ^
-/link user32.lib
+/Fe:PacketScopeGUI.exe src\gui_main.c src\gui.c src\capture.c ^
+/link /LIBPATH:"C:\Dev\npcap-sdk-1.17\Lib\x64" wpcap.lib user32.lib
 
 if errorlevel 1 exit /b 1
+goto BUILD_SUCCESS
 
+:BUILD_SUCCESS
 echo BUILD SUCCESS!
+exit /b 0

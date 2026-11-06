@@ -2,13 +2,14 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "Build PacketScope",
+            "label": "Build PacketScope Console",
             "type": "process",
             "command": "C:\\Windows\\System32\\cmd.exe",
             "args": [
                 "/d",
                 "/c",
-                "build.cmd"
+                "build.cmd",
+                "console"
             ],
             "options": {
                 "cwd": "${workspaceFolder}"
@@ -16,6 +17,21 @@
             "group": {
                 "kind": "build",
                 "isDefault": true
+            },
+            "problemMatcher": "$msCompile"
+        },
+        {
+            "label": "Build PacketScope GUI",
+            "type": "process",
+            "command": "C:\\Windows\\System32\\cmd.exe",
+            "args": [
+                "/d",
+                "/c",
+                "build.cmd",
+                "gui"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
             },
             "problemMatcher": "$msCompile"
         }
