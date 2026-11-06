@@ -60,7 +60,7 @@ int main()
     const u_char *data = NULL;
     int result;
 
-    pcap_t *handle = pcap_open_live(current->name, 65535, 0, 1000, errbuf);
+    pcap_t *handle = open_capture(current->name, errbuf);
 
     if (handle == NULL)
     {
@@ -71,7 +71,7 @@ int main()
 
     printf("Capture device opened!\n");
 
-    result = pcap_next_ex(handle, &header, &data);
+    result = receive_packet(handle, &header, &data);
 
     if (result == 1)
     {

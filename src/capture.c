@@ -24,3 +24,16 @@ int list_devices(pcap_if_t *alldevs)
 
     return count;
 }
+
+pcap_t *open_capture(const char *device_name, char *errbuf)
+{
+    // pcap_open_live() 호출
+    pcap_t *handle = pcap_open_live(device_name, 65535, 0, 1000, errbuf);
+    // 반환된 handle을 return
+    return handle;
+}
+
+int receive_packet(pcap_t *handle, struct pcap_pkthdr **header, const u_char **data) {
+    int result = pcap_next_ex(handle, header, data);
+    return result;
+}
