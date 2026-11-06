@@ -5,11 +5,20 @@ call "C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\Common7\Tools
 
 if errorlevel 1 exit /b 1
 
+REM 1. 콘솔 버전 빌드
 cl /nologo /W4 /utf-8 /std:c17 /Zi ^
 /I"C:\Dev\npcap-sdk-1.17\Include" ^
 /I"include" ^
 /Fe:PacketScope.exe src\main.c src\capture.c src\parser.c ^
 /link /LIBPATH:"C:\Dev\npcap-sdk-1.17\Lib\x64" wpcap.lib
+
+if errorlevel 1 exit /b 1
+
+REM 2. GUI 버전 빌드
+cl /nologo /W4 /utf-8 /std:c17 /Zi ^
+/I"include" ^
+/Fe:PacketScopeGUI.exe src\gui_main.c src\gui.c ^
+/link user32.lib
 
 if errorlevel 1 exit /b 1
 
