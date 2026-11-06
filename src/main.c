@@ -9,7 +9,7 @@ int main()
     pcap_if_t *current = NULL;     // 목록을 순회할 때 사용하는 포인터
     char errbuf[PCAP_ERRBUF_SIZE]; // 오류 메시지를 저장할 공간
 
-    if (pcap_findalldevs(&alldevs, errbuf) == 0)
+    if (find_devices(&alldevs, errbuf) == 0)
     {
         printf("SUCCESS\n");
     }
@@ -40,11 +40,12 @@ int main()
         return 1;
     }
 
-    current = alldevs;
-
-    for (int i = 0; i < num - 1; i++)
+    current = get_device_by_index(alldevs, num);
+    if (current == NULL)
     {
-        current = current->next;
+        printf("Adapter not found\n");
+        pcap_freealldevs(alldevs);
+        return 1;
     }
 
     if (current->description != NULL)

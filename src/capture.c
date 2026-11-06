@@ -3,7 +3,7 @@
 
 int list_devices(pcap_if_t *alldevs)
 {
-    pcap_if_t *current = alldevs;     // 목록을 순회할 때 사용하는 포인터
+    pcap_if_t *current = alldevs; // 목록을 순회할 때 사용하는 포인터
     int count = 0;
 
     while (current != NULL)
@@ -33,7 +33,33 @@ pcap_t *open_capture(const char *device_name, char *errbuf)
     return handle;
 }
 
-int receive_packet(pcap_t *handle, struct pcap_pkthdr **header, const u_char **data) {
+int receive_packet(pcap_t *handle, struct pcap_pkthdr **header, const u_char **data)
+{
     int result = pcap_next_ex(handle, header, data);
     return result;
+}
+
+int find_devices(pcap_if_t **alldevs, char *errbuf)
+{
+    // pcap_findalldevs() 호출
+    // 반환값을 그대로 return
+    return pcap_findalldevs(alldevs, errbuf);
+}
+
+pcap_if_t *get_device_by_index(pcap_if_t *alldevs, int index)
+{
+    if (index < 1)
+    {
+        return NULL;
+    }
+    pcap_if_t *current = alldevs;
+    for (int i = 0; i < index - 1; i++)
+    {
+        if (current == NULL)
+        {
+            return NULL;
+        }
+        current = current->next;
+    }
+    return current;
 }

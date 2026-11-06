@@ -9,5 +9,7 @@
 int list_devices(pcap_if_t *alldevs);
 pcap_t *open_capture(const char *device_name, char *errbuf);
 int receive_packet(pcap_t *handle, struct pcap_pkthdr **header, const u_char **data);
+int find_devices(pcap_if_t **alldevs, char *errbuf);
+pcap_if_t *get_device_by_index(pcap_if_t *alldevs, int index);
 
 #endif
