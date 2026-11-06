@@ -7,7 +7,8 @@ if errorlevel 1 exit /b 1
 
 cl /nologo /W4 /utf-8 /std:c17 /Zi ^
 /I"C:\Dev\npcap-sdk-1.17\Include" ^
-/Fe:PacketScope.exe src\main.c ^
+/I"include" ^
+/Fe:PacketScope.exe src\main.c src\capture.c src\parser.c ^
 /link /LIBPATH:"C:\Dev\npcap-sdk-1.17\Lib\x64" wpcap.lib
 
 if errorlevel 1 exit /b 1
