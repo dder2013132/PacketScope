@@ -23,4 +23,11 @@ int get_ipv4_protocol(
     unsigned int length
 );
 
+int parse_transport_ports(
+    const unsigned char *data,
+    unsigned int length,
+    unsigned short *sourcePort,
+    unsigned short *destinationPort
+);
+
 #endif

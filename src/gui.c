@@ -707,6 +707,11 @@ DWORD WINAPI capture_thread(LPVOID param)
 {
     CaptureContext *ctx = (CaptureContext *)param;
     pcap_t *handle = ctx->handle;
+    if (pcap_datalink(handle) != DLT_EN10MB)
+    {
+        printf("Unsupported link-layer type.\n");
+        return 0;
+    }
     struct pcap_pkthdr *header = NULL;
     const u_char *data = NULL;
     while (atomic_load(&ctx->running))
@@ -725,6 +730,14 @@ DWORD WINAPI capture_thread(LPVOID param)
             {
                 continue;
             }
+            unsigned short sourcePort = 0;
+            unsigned short destinationPort = 0;
+
+            int hasPorts = parse_transport_ports(
+                data,
+                header->caplen,
+                &sourcePort,
+                &destinationPort);
             PacketRow *packet = calloc(1, sizeof(PacketRow));
             if (packet == NULL)
             {
@@ -732,18 +745,38 @@ DWORD WINAPI capture_thread(LPVOID param)
                 break;
             }
             packet->number = 1;
-            swprintf(
-                packet->source,
-                46,
-                L"%u.%u.%u.%u",
-                source[0], source[1], source[2], source[3]);
+            if (hasPorts)
+            {
+                swprintf(
+                    packet->source,
+                    46,
+                    L"%u.%u.%u.%u:%u",
+                    source[0], source[1], source[2], source[3],
+                    (unsigned int)sourcePort);
 
-            swprintf(
-                packet->destination,
-                46,
-                L"%u.%u.%u.%u",
-                destination[0], destination[1],
-                destination[2], destination[3]);
+                swprintf(
+                    packet->destination,
+                    46,
+                    L"%u.%u.%u.%u:%u",
+                    destination[0], destination[1],
+                    destination[2], destination[3],
+                    (unsigned int)destinationPort);
+            }
+            else
+            {
+                swprintf(
+                    packet->source,
+                    46,
+                    L"%u.%u.%u.%u",
+                    source[0], source[1], source[2], source[3]);
+
+                swprintf(
+                    packet->destination,
+                    46,
+                    L"%u.%u.%u.%u",
+                    destination[0], destination[1],
+                    destination[2], destination[3]);
+            }
             int protocol = get_ipv4_protocol(data, header->caplen);
 
             switch (protocol)

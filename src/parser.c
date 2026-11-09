@@ -117,4 +117,69 @@ int get_ipv4_protocol(
     }
 
     return data[23];
+};
+
+int parse_transport_ports(
+    const unsigned char *data,
+    unsigned int length,
+    unsigned short *sourcePort,
+    unsigned short *destinationPort)
+{
+    if (data == NULL || sourcePort == NULL || destinationPort == NULL)
+    {
+        return 0;
+    }
+
+    if (!is_ipv4_packet(data, length) || length < 34)
+    {
+        return 0;
+    }
+
+    unsigned int version = data[14] >> 4;
+    unsigned int ihl = data[14] & 0x0F;
+
+    if (version != 4 || ihl < 5)
+    {
+        return 0;
+    }
+
+    unsigned int ipHeaderLength = ihl * 4;
+    unsigned int transportHeaderOffset = 14 + ipHeaderLength;
+
+    if (length < transportHeaderOffset + 4)
+    {
+        return 0;
+    }
+
+    unsigned int protocol = data[23];
+
+    if (protocol != 6 && protocol != 17)
+    {
+        return 0;
+    }
+
+    unsigned int fragmentOffset =
+        (((unsigned int)data[20] << 8) | data[21]) & 0x1FFF;
+
+    if (fragmentOffset != 0)
+    {
+        return 0;
+    }
+
+    unsigned int totalLength =
+        ((unsigned int)data[16] << 8) | data[17];
+
+    if (totalLength < ipHeaderLength + 4 ||
+        length < transportHeaderOffset + 4)
+    {
+        return 0;
+    }
+
+    *sourcePort =
+        ((unsigned int)data[transportHeaderOffset] << 8) | data[transportHeaderOffset + 1];
+
+    *destinationPort =
+        ((unsigned int)data[transportHeaderOffset + 2] << 8) | data[transportHeaderOffset + 3];
+
+    return 1;
 }
