@@ -1,3 +1,4 @@
+
 {
     "configurations": [
         {
@@ -12,6 +13,9 @@
                 "_UNICODE"
             ],
             "compilerPath": "C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools/VC/Tools/MSVC/14.51.36260/bin/Hostx64/x64/cl.exe",
+            "compilerArgs": [
+                "/experimental:c11atomics"
+            ],
             "cStandard": "c17",
             "intelliSenseMode": "windows-msvc-x64"
         }

@@ -2,8 +2,11 @@
 #include <windows.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 #include "gui.h"
 #include "capture.h"
+
+#define WM_CAPTURE_FINISHED (WM_APP + 1)
 
 LRESULT CALLBACK WindowProc(
     HWND hwnd,
@@ -11,7 +14,21 @@ LRESULT CALLBACK WindowProc(
     WPARAM wParam,
     LPARAM lParam);
 
+typedef struct
+{
+    CaptureContext *capture;
+    HANDLE thread;
+    HANDLE waitHandle;
+    bool closing;
+} GuiState;
+
+void cleanup_capture(GuiState *state);
+
 void free_adapter_data(HWND combo);
+
+VOID CALLBACK capture_finished_callback(
+    PVOID param,
+    BOOLEAN timedOut);
 
 DWORD WINAPI capture_thread(LPVOID param);
 
@@ -96,11 +113,32 @@ LRESULT CALLBACK WindowProc(
             free_adapter_data(combo);
         }
 
+        GuiState *state = (GuiState *)GetWindowLongPtrW(
+            hwnd,
+            GWLP_USERDATA);
+
+        if (state != NULL)
+        {
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+            free(state);
+        }
+
         PostQuitMessage(0);
         return 0;
     }
     case WM_CREATE:
     {
+        GuiState *state = calloc(1, sizeof(GuiState));
+
+        if (state == NULL)
+        {
+            return -1;
+        }
+
+        SetWindowLongPtrW(
+            hwnd,
+            GWLP_USERDATA,
+            (LONG_PTR)state);
         CreateWindowExW(
             0,
             L"BUTTON",
@@ -110,6 +148,17 @@ LRESULT CALLBACK WindowProc(
             140, 35,
             hwnd,
             (HMENU)1001,
+            GetModuleHandleW(NULL),
+            NULL);
+        CreateWindowExW(
+            0,
+            L"BUTTON",
+            L"Stop Capture",
+            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            20, 65,
+            140, 35,
+            hwnd,
+            (HMENU)1003,
             GetModuleHandleW(NULL),
             NULL);
         HWND combo = CreateWindowExW(
@@ -227,6 +276,23 @@ LRESULT CALLBACK WindowProc(
         if (LOWORD(wParam) == 1001 &&
             HIWORD(wParam) == BN_CLICKED)
         {
+            GuiState *state = (GuiState *)GetWindowLongPtrW(
+                hwnd,
+                GWLP_USERDATA);
+
+            if (state == NULL)
+            {
+                MessageBoxW(
+                    hwnd,
+                    L"Failed to get GUI state.",
+                    L"PacketScope Error",
+                    MB_OK | MB_ICONERROR);
+                return 0;
+            }
+            if (state->thread != NULL)
+            {
+                return 0;
+            }
             HWND combo = GetDlgItem(hwnd, 1002);
             LRESULT selectedIndex = SendMessageW(
                 combo, CB_GETCURSEL, 0, 0);
@@ -262,14 +328,26 @@ LRESULT CALLBACK WindowProc(
                         L"Failed to open capture handle.",
                         L"PacketScope Error",
                         MB_OK | MB_ICONERROR);
+                    return 0;
+                }
+                CaptureContext *ctx = malloc(sizeof(CaptureContext));
+                if (ctx == NULL)
+                {
+                    MessageBoxW(
+                        hwnd,
+                        L"Failed to allocate capture context.",
+                        L"PacketScope Error",
+                        MB_OK | MB_ICONERROR);
                     pcap_close(handle);
                     return 0;
                 }
+                ctx->handle = handle;
+                atomic_init(&ctx->running, true);
                 HANDLE thread = CreateThread(
                     NULL,
                     0,
                     capture_thread,
-                    handle,
+                    ctx,
                     0,
                     NULL);
                 if (thread == NULL)
@@ -280,25 +358,50 @@ LRESULT CALLBACK WindowProc(
                         L"PacketScope Error",
                         MB_OK | MB_ICONERROR);
                     pcap_close(handle);
+                    free(ctx);
                     return 0;
                 }
-                DWORD waitResult = WaitForSingleObject(thread, INFINITE);
-                if (waitResult == WAIT_FAILED)
+                state->capture = ctx;
+                state->thread = thread;
+
+                BOOL registered = RegisterWaitForSingleObject(
+                    &state->waitHandle,
+                    state->thread,
+                    capture_finished_callback,
+                    hwnd,
+                    INFINITE,
+                    WT_EXECUTEONLYONCE);
+
+                if (!registered)
                 {
+                    DWORD error = GetLastError();
+
+                    atomic_store(&ctx->running, false);
+                    pcap_breakloop(handle);
+
                     MessageBoxW(
                         hwnd,
-                        L"Failed to wait for capture thread.",
+                        L"Failed to register wait for capture thread.",
                         L"PacketScope Error",
                         MB_OK | MB_ICONERROR);
-                    return 0;
-                }
-                if (waitResult == WAIT_OBJECT_0)
-                {
-                    // 스레드 핸들 닫기
-                    CloseHandle(thread);
 
-                    // Npcap 캡처 핸들 닫기
-                    pcap_close(handle);
+                    UINT_PTR timerId = SetTimer(
+                        hwnd,
+                        1,
+                        100,
+                        NULL);
+
+                    if (timerId == 0)
+                    {
+                        {
+                            MessageBoxW(
+                                hwnd,
+                                L"Failed to wait for capture thread.",
+                                L"PacketScope Error",
+                                MB_OK | MB_ICONERROR);
+                        }
+                    }
+                    return 0;
                 }
                 wchar_t adapterName[256] = {0};
 
@@ -333,8 +436,130 @@ LRESULT CALLBACK WindowProc(
                 return 0;
             }
         }
-        break;
+        if (LOWORD(wParam) == 1003 &&
+            HIWORD(wParam) == BN_CLICKED)
+        {
+            GuiState *state = (GuiState *)GetWindowLongPtrW(
+                hwnd,
+                GWLP_USERDATA);
 
+            if (state == NULL || state->capture == NULL)
+            {
+                return 0;
+            }
+
+            atomic_store(&state->capture->running, false);
+
+            pcap_breakloop(state->capture->handle);
+
+            return 0;
+        }
+        break;
+    case WM_CAPTURE_FINISHED:
+    {
+        GuiState *state = (GuiState *)GetWindowLongPtrW(
+            hwnd,
+            GWLP_USERDATA);
+
+        if (state == NULL || state->thread == NULL)
+        {
+            return 0;
+        }
+
+        DWORD result = WaitForSingleObject(state->thread, 0);
+
+        if (result != WAIT_OBJECT_0)
+        {
+            return 0;
+        }
+
+        if (state->waitHandle != NULL)
+        {
+            BOOL unregistered = UnregisterWaitEx(
+                state->waitHandle,
+                INVALID_HANDLE_VALUE);
+
+            if (!unregistered)
+            {
+                MessageBoxW(
+                    hwnd,
+                    L"Failed to unregister capture wait.",
+                    L"PacketScope Error",
+                    MB_OK | MB_ICONERROR);
+                return 0;
+            }
+
+            state->waitHandle = NULL;
+        }
+
+        cleanup_capture(state);
+
+        if (state->closing)
+        {
+            DestroyWindow(hwnd);
+        }
+
+        return 0;
+    }
+    case WM_TIMER:
+    {
+        if (wParam != 1)
+        {
+            break;
+        }
+        GuiState *state = (GuiState *)GetWindowLongPtrW(
+            hwnd,
+            GWLP_USERDATA);
+
+        if (state == NULL || state->thread == NULL)
+        {
+            KillTimer(hwnd, 1);
+            return 0;
+        }
+
+        DWORD result = WaitForSingleObject(state->thread, 0);
+
+        if (result == WAIT_OBJECT_0)
+        {
+            KillTimer(hwnd, 1);
+            cleanup_capture(state);
+
+            if (state->closing)
+            {
+                DestroyWindow(hwnd);
+            }
+        }
+        else if (result == WAIT_TIMEOUT)
+        {
+            // 아직 실행 중
+        }
+        else if (result == WAIT_FAILED)
+        {
+            // 오류 발생
+        }
+
+        return 0;
+    }
+    case WM_CLOSE:
+    {
+        GuiState *state = (GuiState *)GetWindowLongPtrW(
+            hwnd,
+            GWLP_USERDATA);
+
+        if (state == NULL || state->thread == NULL)
+        {
+            DestroyWindow(hwnd);
+            return 0;
+        }
+
+        state->closing = true;
+
+        atomic_store(&state->capture->running, false);
+
+        pcap_breakloop(state->capture->handle);
+
+        return 0;
+    }
     default:
         return DefWindowProcW(hwnd, uMsg, wParam, lParam);
     }
@@ -378,12 +603,65 @@ void free_adapter_data(HWND combo)
 
 DWORD WINAPI capture_thread(LPVOID param)
 {
-    pcap_t *handle = (pcap_t *)param;
+    CaptureContext *ctx = (CaptureContext *)param;
+    pcap_t *handle = ctx->handle;
     struct pcap_pkthdr *header = NULL;
     const u_char *data = NULL;
-    int result = receive_packet(handle, &header, &data);
-    if (result == 1) {
-        printf("%u", header->caplen);
+    while (atomic_load(&ctx->running))
+    {
+        int result = receive_packet(handle, &header, &data);
+        if (result == 1)
+        {
+            printf("%u\n", header->caplen);
+        }
+        else if (result == 0)
+        {
+            printf("Timeout occurred\n");
+        }
+        else if (result == -1)
+        {
+            printf("Error occurred: %s\n", pcap_geterr(handle));
+            break;
+        }
+        else if (result == -2)
+        {
+            printf("No more packets to read from the savefile\n");
+            break;
+        }
     }
     return 0;
+}
+
+void cleanup_capture(GuiState *state)
+{
+    if (state == NULL || state->capture == NULL)
+    {
+        return;
+    }
+
+    pcap_close(state->capture->handle);
+
+    if (state->thread != NULL)
+    {
+        CloseHandle(state->thread);
+    }
+
+    free(state->capture);
+
+    state->capture = NULL;
+    state->thread = NULL;
+}
+
+VOID CALLBACK capture_finished_callback(
+    PVOID param,
+    BOOLEAN timedOut)
+{
+    (void)timedOut; // 사용되지 않는 매개변수 무시
+    HWND hwnd = (HWND)param;
+
+    PostMessageW(
+        hwnd,
+        WM_CAPTURE_FINISHED,
+        0,
+        0);
 }

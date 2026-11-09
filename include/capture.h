@@ -2,6 +2,13 @@
 #define CAPTURE_H
 
 #include <pcap.h>
+#include <stdatomic.h>
+
+typedef struct
+{
+    pcap_t *handle;
+    atomic_bool running;
+} CaptureContext;
 
 //#ifndef, #define, #endif는 헤더 파일이 
 //한 번의 컴파일 과정에서 중복으로 포함되더라도 
