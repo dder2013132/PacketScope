@@ -3,10 +3,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <stdio.h>
+#include <commctrl.h>
 #include "gui.h"
 #include "capture.h"
+#include "packet_parser.h"
 
 #define WM_CAPTURE_FINISHED (WM_APP + 1)
+#define WM_PACKET_RECEIVED (WM_APP + 2)
 
 LRESULT CALLBACK WindowProc(
     HWND hwnd,
@@ -22,9 +26,23 @@ typedef struct
     bool closing;
 } GuiState;
 
+typedef struct
+{
+    int number;
+    wchar_t source[46];
+    wchar_t destination[46];
+    wchar_t protocol[16];
+} PacketRow;
+
+void drain_packet_messages(HWND hwnd);
+
 void cleanup_capture(GuiState *state);
 
 void free_adapter_data(HWND combo);
+
+void add_packet_row(
+    HWND listView,
+    const PacketRow *packet);
 
 VOID CALLBACK capture_finished_callback(
     PVOID param,
@@ -35,6 +53,16 @@ DWORD WINAPI capture_thread(LPVOID param);
 int run_gui(void)
 {
     HINSTANCE hInstance = GetModuleHandleW(NULL);
+
+    INITCOMMONCONTROLSEX icc = {0};
+
+    icc.dwSize = sizeof(icc);
+    icc.dwICC = ICC_LISTVIEW_CLASSES;
+
+    if (!InitCommonControlsEx(&icc))
+    {
+        return 1;
+    }
 
     WNDCLASSW wc = {0};
     wc.hInstance = hInstance;
@@ -172,6 +200,46 @@ LRESULT CALLBACK WindowProc(
             (HMENU)1002,
             GetModuleHandleW(NULL),
             NULL);
+        HWND listView = CreateWindowExW(
+            WS_EX_CLIENTEDGE,
+            WC_LISTVIEWW,
+            L"",
+            WS_CHILD | WS_VISIBLE | LVS_REPORT,
+            20, 120,
+            840, 380,
+            hwnd,
+            (HMENU)1004,
+            GetModuleHandleW(NULL),
+            NULL);
+
+        if (listView == NULL)
+        {
+            return -1;
+        }
+        LVCOLUMNW column = {0};
+
+        column.mask = LVCF_TEXT | LVCF_WIDTH;
+
+        // 0번 열
+        column.cx = 60;
+        column.pszText = L"No.";
+        SendMessageW(listView, LVM_INSERTCOLUMNW, 0, (LPARAM)&column);
+
+        // 1번 열
+        column.cx = 220;
+        column.pszText = L"Source";
+        SendMessageW(listView, LVM_INSERTCOLUMNW, 1, (LPARAM)&column);
+
+        // 2번 열
+        column.cx = 220;
+        column.pszText = L"Destination";
+        SendMessageW(listView, LVM_INSERTCOLUMNW, 2, (LPARAM)&column);
+
+        // 3번 열
+        column.cx = 340;
+        column.pszText = L"Protocol";
+        SendMessageW(listView, LVM_INSERTCOLUMNW, 3, (LPARAM)&column);
+
         pcap_if_t *alldevs = NULL;
         char errbuf[PCAP_ERRBUF_SIZE] = {0};
 
@@ -343,6 +411,8 @@ LRESULT CALLBACK WindowProc(
                 }
                 ctx->handle = handle;
                 atomic_init(&ctx->running, true);
+                atomic_init(&ctx->pendingPackets, 0);
+                ctx->hwnd = hwnd;
                 HANDLE thread = CreateThread(
                     NULL,
                     0,
@@ -492,6 +562,7 @@ LRESULT CALLBACK WindowProc(
             state->waitHandle = NULL;
         }
 
+        drain_packet_messages(hwnd);
         cleanup_capture(state);
 
         if (state->closing)
@@ -522,6 +593,7 @@ LRESULT CALLBACK WindowProc(
         if (result == WAIT_OBJECT_0)
         {
             KillTimer(hwnd, 1);
+            drain_packet_messages(hwnd);
             cleanup_capture(state);
 
             if (state->closing)
@@ -557,6 +629,36 @@ LRESULT CALLBACK WindowProc(
         atomic_store(&state->capture->running, false);
 
         pcap_breakloop(state->capture->handle);
+
+        return 0;
+    }
+    case WM_PACKET_RECEIVED:
+    {
+        PacketRow *packet = (PacketRow *)lParam;
+
+        if (packet != NULL)
+        {
+            GuiState *state = (GuiState *)GetWindowLongPtrW(
+                hwnd,
+                GWLP_USERDATA);
+
+            if (state != NULL && !state->closing)
+            {
+                HWND listView = GetDlgItem(hwnd, 1004);
+
+                if (listView != NULL)
+                {
+                    add_packet_row(listView, packet);
+                }
+            }
+
+            if (state != NULL && state->capture != NULL)
+            {
+                atomic_fetch_sub(&state->capture->pendingPackets, 1);
+            }
+
+            free(packet);
+        }
 
         return 0;
     }
@@ -612,6 +714,75 @@ DWORD WINAPI capture_thread(LPVOID param)
         int result = receive_packet(handle, &header, &data);
         if (result == 1)
         {
+            unsigned char source[4];
+            unsigned char destination[4];
+
+            if (!parse_ipv4_addresses(
+                    data,
+                    header->caplen,
+                    source,
+                    destination))
+            {
+                continue;
+            }
+            PacketRow *packet = calloc(1, sizeof(PacketRow));
+            if (packet == NULL)
+            {
+                printf("Failed to allocate PacketRow.\n");
+                break;
+            }
+            packet->number = 1;
+            swprintf(
+                packet->source,
+                46,
+                L"%u.%u.%u.%u",
+                source[0], source[1], source[2], source[3]);
+
+            swprintf(
+                packet->destination,
+                46,
+                L"%u.%u.%u.%u",
+                destination[0], destination[1],
+                destination[2], destination[3]);
+            int protocol = get_ipv4_protocol(data, header->caplen);
+
+            switch (protocol)
+            {
+            case 1:
+                wcscpy_s(packet->protocol, 16, L"ICMP");
+                break;
+
+            case 6:
+                wcscpy_s(packet->protocol, 16, L"TCP");
+                break;
+
+            case 17:
+                wcscpy_s(packet->protocol, 16, L"UDP");
+                break;
+
+            default:
+                swprintf(packet->protocol, 16, L"IP %d", protocol);
+                break;
+            }
+
+            if (atomic_load(&ctx->pendingPackets) >= 100)
+            {
+                free(packet);
+                continue;
+            }
+            atomic_fetch_add(&ctx->pendingPackets, 1);
+            BOOL posted = PostMessageW(
+                ctx->hwnd,
+                WM_PACKET_RECEIVED,
+                0,
+                (LPARAM)packet);
+
+            if (!posted)
+            {
+                atomic_fetch_sub(&ctx->pendingPackets, 1);
+                free(packet);
+                break;
+            }
             printf("%u\n", header->caplen);
         }
         else if (result == 0)
@@ -630,6 +801,22 @@ DWORD WINAPI capture_thread(LPVOID param)
         }
     }
     return 0;
+}
+
+void drain_packet_messages(HWND hwnd)
+{
+    MSG msg;
+
+    while (PeekMessageW(
+        &msg,
+        hwnd,
+        WM_PACKET_RECEIVED,
+        WM_PACKET_RECEIVED,
+        PM_REMOVE))
+    {
+        PacketRow *packet = (PacketRow *)msg.lParam;
+        free(packet);
+    }
 }
 
 void cleanup_capture(GuiState *state)
@@ -664,4 +851,72 @@ VOID CALLBACK capture_finished_callback(
         WM_CAPTURE_FINISHED,
         0,
         0);
+}
+
+void add_packet_row(
+    HWND listView,
+    const PacketRow *packet)
+{
+    HWND hwnd = GetParent(listView);
+    LVITEMW item = {0};
+
+    wchar_t numberText[32];
+
+    item.mask = LVIF_TEXT;
+    item.iItem = ListView_GetItemCount(listView);
+    item.iSubItem = 0;
+
+    swprintf(
+        numberText,
+        32,
+        L"%d",
+        item.iItem + 1);
+
+    item.pszText = numberText;
+
+    LRESULT index = SendMessageW(
+        listView,
+        LVM_INSERTITEMW,
+        0,
+        (LPARAM)&item);
+
+    if (index == -1)
+    {
+        MessageBoxW(
+            hwnd,
+            L"Failed to insert packet row.",
+            L"PacketScope Error",
+            MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    item.iItem = (int)index;
+    item.iSubItem = 1;
+    item.pszText = (LPWSTR)packet->source;
+
+    SendMessageW(
+        listView,
+        LVM_SETITEMTEXTW,
+        (WPARAM)index,
+        (LPARAM)&item);
+
+    item.iItem = (int)index;
+    item.iSubItem = 2;
+    item.pszText = (LPWSTR)packet->destination;
+
+    SendMessageW(
+        listView,
+        LVM_SETITEMTEXTW,
+        (WPARAM)index,
+        (LPARAM)&item);
+
+    item.iItem = (int)index;
+    item.iSubItem = 3;
+    item.pszText = (LPWSTR)packet->protocol;
+
+    SendMessageW(
+        listView,
+        LVM_SETITEMTEXTW,
+        (WPARAM)index,
+        (LPARAM)&item);
 }

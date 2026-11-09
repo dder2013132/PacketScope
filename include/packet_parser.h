@@ -9,4 +9,18 @@ void analyze_packet(
     const u_char *data
 );
 
+int is_ipv4_packet(const unsigned char *data, unsigned int length);
+
+int parse_ipv4_addresses (
+    const unsigned char *data,
+    unsigned int length,
+    unsigned char source[4],
+    unsigned char destination[4]
+);
+
+int get_ipv4_protocol(
+    const unsigned char *data,
+    unsigned int length
+);
+
 #endif

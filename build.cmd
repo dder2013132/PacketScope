@@ -26,10 +26,10 @@ goto BUILD_SUCCESS
 :BUILD_GUI
 echo Building PacketScope GUI...
 
-cl /nologo /W4 /utf-8 /std:c17 /Zi /experimental:c11atomics ^
+cl /nologo /W4 /utf-8 /std:c17 /Zi /experimental:c11atomics comctl32.lib ^
 /I"C:\Dev\npcap-sdk-1.17\Include" ^
 /I"include" ^
-/Fe:PacketScopeGUI.exe src\gui_main.c src\gui.c src\capture.c ^
+/Fe:PacketScopeGUI.exe src\gui_main.c src\gui.c src\capture.c src\parser.c ^
 /link /LIBPATH:"C:\Dev\npcap-sdk-1.17\Lib\x64" wpcap.lib user32.lib
 
 if errorlevel 1 exit /b 1
