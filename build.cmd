@@ -14,7 +14,7 @@ exit /b 1
 :BUILD_CONSOLE
 echo Building PacketScope Console...
 
-cl /nologo /W4 /utf-8 /std:c17 /Zi ^
+cl /nologo /W4 /utf-8 /std:c17 /Zi /experimental:c11atomics ^
 /I"C:\Dev\npcap-sdk-1.17\Include" ^
 /I"include" ^
 /Fe:PacketScope.exe src\main.c src\capture.c src\parser.c ^
