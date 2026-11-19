@@ -1,251 +1,506 @@
-# PacketScope
+# PacketScope — 개발 기록 및 현재 구현 상태
 
-**PacketScope**는 Windows에서 네트워크 어댑터를 선택하고 패킷을 캡처·분석하는 **C 기반 학습용 네트워크 패킷 분석기**입니다. Npcap을 통해 실제 패킷을 수신하며, 콘솔 프로그램에서 시작해 Win32 GUI로 기능을 확장하고 있습니다.
+> **최신 갱신: 2026-11-09 / Mission 07-4 완료**  
+> 이 README는 초기 학습 기록(아래 1~19절)을 보존하고, 이후 진행 사항을 20절부터 추가한 문서다.  
+> **주의:** 12~19절의 '미구현', '다음 할 일', '미검증' 표시는 **2026-11-06 당시의 역사적 기록**이다. 현재 상태는 맨 아래 20~26절과 최신 진행 표를 우선 참고한다.
 
-> **개발 상태 (2026-11-09): Work in Progress**  
-> 콘솔 측 패킷 수신·EtherType 분석은 이전 개발 과정에서 실제 동작을 확인했습니다. GUI는 캡처 워커 스레드와 종료 알림 구조를 구현 중이지만, **최신 소스의 빌드·실행 및 모든 종료/예외 경로는 아직 검증되지 않았습니다.** 안정적인 패킷 모니터링 도구로 사용하기 전 추가 수정이 필요합니다.
+## 최신 진행 요약
 
-## 주요 기능 및 구현 상태
-
-| 기능 | 상태 | 비고 |
-| --- | --- | --- |
-| Npcap 네트워크 어댑터 검색 | ✅ 구현 및 이전 실행 확인 | `pcap_findalldevs()` |
-| 콘솔에서 어댑터 번호 선택 | ✅ 구현 및 이전 실행 확인 | 연결 리스트 순회 및 인덱스 검증 |
-| 패킷 1개 수신 | ✅ 콘솔 구현 및 이전 실행 확인 | `pcap_next_ex()` |
-| 패킷 크기 및 처음 16바이트 출력 | ✅ 콘솔 구현 및 이전 실행 확인 | `caplen`, `len`, 16진수 출력 |
-| Ethernet EtherType 식별 | ✅ 콘솔 구현 및 이전 실행 확인 | IPv4 / ARP / IPv6 / Unknown |
-| Win32 창과 어댑터 콤보박스 | ✅ 구현 및 이전 실행 확인 | 표시 문자열과 장치 식별자 분리 보관 |
-| GUI Start/Stop 버튼 | 🟡 코드 작성 | 최신 동작 검증 필요 |
-| GUI 반복 패킷 수신 워커 스레드 | 🟡 코드 작성 | 결과는 현재 `printf()` 중심 |
-| 스레드 종료 알림(`WM_CAPTURE_FINISHED`) | 🟡 코드 작성 | `RegisterWaitForSingleObject()` 기반, 오류 경로 보완 필요 |
-| GUI 패킷 목록/상세 화면 | ⬜ 미구현 | 현재 콘솔 출력과 분리되지 않음 |
-| TCP/UDP 포트, IP 주소 상세 해석 | ⬜ 미구현 | 현재는 주로 EtherType 식별 |
-| 파일 저장·필터링·통계 | ⬜ 미구현 | 향후 계획 |
-
-✅ 완료/과거 실행 확인 · 🟡 구현 중/최신 검증 필요 · ⬜ 미구현
-
-## 기술 스택
-
-- **언어:** C (`/std:c17`)
-- **운영체제:** Windows 11
-- **컴파일러:** Microsoft Visual C++ (`cl`, Visual Studio Build Tools 2026)
-- **개발 환경:** VS Code, Developer Command Prompt / `VsDevCmd.bat`
-- **패킷 캡처:** Npcap, Npcap SDK 1.17 (`wpcap.lib`, `pcap.h`)
-- **GUI:** Win32 API (`user32.lib`)
-- **동시성:** Windows 스레드·메시지 큐 및 C 원자 변수(`atomic_bool`)
-
-## 프로젝트 구조
-
-```text
-PacketScope/
-├── build.cmd
-├── README.md
-├── include/
-│   ├── capture.h
-│   ├── gui.h
-│   └── packet_parser.h
-└── src/
-    ├── main.c          # 콘솔 실행 진입점 및 캡처 흐름
-    ├── gui_main.c      # GUI 실행 진입점
-    ├── capture.c       # 장치 탐색, 열기 및 패킷 수신 공통 함수
-    ├── parser.c        # 패킷 요약 및 EtherType 분석
-    └── gui.c           # Win32 UI, 캡처 스레드와 종료 관리
-```
-
-현재 빌드 스크립트는 **콘솔과 GUI를 별도 실행 파일**로 만듭니다. `parser.c`는 콘솔 빌드에만 포함되어 있으므로 **GUI에서는 현재 `analyze_packet()`을 사용하지 않습니다.**
-
-## 사전 준비
-
-1. Windows에 **Npcap 런타임** 설치
-2. **Npcap SDK 1.17** 준비
-3. **Visual Studio Build Tools**의 MSVC C/C++ 빌드 환경 설치
-4. 프로젝트의 `src/`, `include/`, `build.cmd` 파일 배치
-
-현재 `build.cmd`는 개발 PC의 아래 위치를 하드코딩하고 있습니다. 다른 PC에서는 실제 설치 경로로 수정해야 합니다.
-
-```text
-C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\Common7\Tools\VsDevCmd.bat
-C:\Dev\npcap-sdk-1.17\Include
-C:\Dev\npcap-sdk-1.17\Lib\x64
-```
-
-## 빌드
-
-프로젝트 루트의 명령 프롬프트에서 실행합니다.
-
-**콘솔 빌드**
-
-```bat
-build.cmd console
-```
-
-출력 대상: `PacketScope.exe`
-
-**GUI 빌드**
-
-```bat
-build.cmd gui
-```
-
-출력 대상: `PacketScopeGUI.exe`
-
-빌드 스크립트는 `cl /W4 /utf-8 /std:c17 /Zi`를 사용하며, **GUI 빌드에만 `/experimental:c11atomics` 옵션을 추가**합니다. 컴파일 결과 파일은 프로젝트 루트에 생성되도록 설정되어 있습니다.
-
-> **알려진 빌드 점검 항목:** 현재 제공된 `gui.c`는 `printf()`를 사용하면서 `<stdio.h>`를 포함하지 않습니다. GUI 최신 소스의 컴파일 성공 여부는 아직 확인되지 않았으며, 빌드 전 해당 헤더를 추가해야 합니다. 이 README는 소스 수정 없이 작성되었습니다.
-
-## 실행
-
-```powershell
-# 콘솔
-.\PacketScope.exe
-
-# GUI (개발 중)
-.\PacketScopeGUI.exe
-```
-
-### Npcap DLL 경로
-
-이전 개발 과정에서 실행 파일이 즉시 종료되는 `0xC0000135` (`STATUS_DLL_NOT_FOUND`) 오류가 있었고, PowerShell에서 다음 경로를 PATH에 추가한 뒤 GUI 실행에 성공했습니다.
-
-```powershell
-$env:PATH = "C:\Windows\System32\Npcap;$env:PATH"
-.\PacketScopeGUI.exe
-```
-
-이는 당시 환경의 해결 기록입니다. Npcap 설치 방식이나 실행 환경에 따라 DLL 검색 경로가 다를 수 있습니다.
-
-## 사용 흐름
-
-### 콘솔 (`PacketScope.exe`)
-
-1. Npcap 어댑터 목록 출력
-2. 캡처할 어댑터의 **1부터 시작하는 번호** 입력
-3. `pcap_open_live()`로 해당 장치 열기
-4. `pcap_next_ex()`로 **패킷 1개** 수신
-5. 수신에 성공한 경우 크기, 처음 16바이트, EtherType 출력
-6. `pcap_close()` 및 `pcap_freealldevs()`로 자원 정리
-
-현재 콘솔 프로그램은 **지속 수신 루프가 아니라 단일 수신 시도**를 수행합니다.
-
-### GUI (`PacketScopeGUI.exe`, 개발 중)
-
-1. Win32 창 생성 및 어댑터 콤보박스 채우기
-2. 선택된 항목에 연결된 실제 Npcap 장치 식별자로 캡처 핸들 열기
-3. Start 버튼 → `CaptureContext` 초기화 및 `CreateThread()` 실행
-4. 캡처 스레드 → `running`이 참인 동안 `pcap_next_ex()` 반복 호출
-5. Stop 버튼 또는 창 닫기 → `atomic_store(..., false)` 및 `pcap_breakloop()` 요청
-6. 스레드 종료 감시 → 콜백이 `WM_CAPTURE_FINISHED` 메시지 게시
-7. GUI 메시지 처리 → 스레드 종료 확인, 감시 등록 해제, 캡처 자원 정리
-
-**이 순서는 현재 목표로 한 정상 경로를 설명하며, 모든 오류 경로가 안전하게 완성되었다는 뜻은 아닙니다.** 현재 GUI는 패킷 목록을 창에 표시하지 않고, 수신 스레드에서 `printf()`로 패킷 길이/상태를 출력하도록 작성되어 있습니다.
-
-## 소스별 역할
-
-| 파일 | 주요 기능 |
-| --- | --- |
-| `capture.c` / `capture.h` | `find_devices()`, `list_devices()`, `get_device_by_index()`, `open_capture()`, `receive_packet()` 및 `CaptureContext` |
-| `parser.c` / `packet_parser.h` | `analyze_packet()`; 패킷 길이, 16진수 앞 16바이트, EtherType 식별 |
-| `main.c` | 콘솔에서 장치 선택, 1회 수신 및 종료 처리 |
-| `gui_main.c` / `gui.h` | `run_gui()` 호출 및 GUI 공개 함수 선언 |
-| `gui.c` | Win32 메시지 루프, 콤보박스·버튼, 스레드 생성·중단·종료 통지 |
-
-### Npcap 캡처 설정
-
-`capture.c`에서는 아래 설정을 사용합니다.
-
-```c
-pcap_open_live(device_name, 65535, 0, 1000, errbuf);
-```
-
-- `65535`: 패킷당 캡처할 최대 바이트 수(`snaplen`)
-- `0`: 무차별 모드 사용 안 함을 요청
-- `1000`: 읽기 버퍼 관련 타임아웃 설정(밀리초)
-- `errbuf`: 오류/경고 메시지 버퍼
-
-**주의:** 1000ms 설정이 `pcap_next_ex()`의 반환을 매번 정확히 1초 안에 보장하지는 않습니다. 무차별 모드가 꺼져 있어도 브로드캐스트나 멀티캐스트 등은 수신할 수 있습니다.
-
-### 현재 패킷 분석 범위
-
-`analyze_packet()`은 `pcap_datalink(handle) == DLT_EN10MB`이고 캡처 길이가 14바이트 이상일 때, 프레임의 12~13번째 바이트를 EtherType으로 해석합니다.
-
-| 값 | 표시 |
-| --- | --- |
-| `0x0800` | IPv4 |
-| `0x0806` | ARP |
-| `0x86DD` | IPv6 |
-| 그 외 | Unknown |
-
-Ethernet II가 아닌 프레임, VLAN 태그, 루프백 등은 별도 해석이 필요합니다. IPv4로 분류되었다고 해서 TCP 또는 UDP까지 분석한 것은 아닙니다.
-
-## GUI 종료 처리 설계 (진행 중)
-
-현재 `GuiState`는 캡처 컨텍스트, 스레드 핸들, 감시 등록 핸들 및 창 종료 요청 상태를 관리합니다.
-
-```c
-typedef struct
-{
-    CaptureContext *capture;
-    HANDLE thread;
-    HANDLE waitHandle;
-    bool closing;
-} GuiState;
-```
-
-`CaptureContext`는 Npcap 핸들과 원자적 실행 플래그를 가집니다.
-
-```c
-typedef struct
-{
-    pcap_t *handle;
-    atomic_bool running;
-} CaptureContext;
-```
-
-- **캡처 워커:** `atomic_load(&ctx->running)`으로 루프 지속 여부 확인
-- **중지 요청:** `atomic_store(..., false)`와 `pcap_breakloop()` 호출
-- **종료 감시:** `RegisterWaitForSingleObject(..., WT_EXECUTEONLYONCE)`
-- **GUI 통지:** 콜백에서 `PostMessageW(hwnd, WM_CAPTURE_FINISHED, 0, 0)`
-- **정상 종료 처리:** GUI에서 `WaitForSingleObject(thread, 0)` 확인 → `UnregisterWaitEx()` → `cleanup_capture()`
-- **등록 실패 시:** 비상용 `WM_TIMER` 폴링 경로가 있으나 **이중 실패 복구가 미완성**
-
-### 현재 확인된 위험·미완성 항목
-
-1. **종료 감시 등록과 타이머가 모두 실패한 경우:** 스레드 종료 확인·자원 회수 경로가 완성되지 않았습니다.
-2. **비상 타이머 실패 경로의 UI 동작:** 오류 대화상자만 표시하며 안전한 복구가 구현되지 않았습니다.
-3. **감시 등록 해제 실패:** 메시지 처리에서 오류 후 반환하므로 완전한 회복·재시도 정책이 없습니다.
-4. **창 파괴/콜백 수명:** `HWND`를 사용하는 콜백이 살아 있을 때 창이 파괴되지 않도록 모든 경로의 수명 보장이 필요합니다.
-5. **스레드 정리 실패 시 자원 소유권:** `WM_DESTROY`는 현재 `GuiState`를 해제하므로 스레드가 남아 있는 오류 경로를 별도로 점검해야 합니다.
-6. **`WM_CREATE` 초기화 실패:** `find_devices()` 실패 후 `return 0`을 사용하고 있어 실패 반환(`-1`) 및 초기화 중 자원 정리를 검토해야 합니다.
-7. **GUI 출력:** 캡처 스레드에서 `printf()`를 사용하지만 GUI에 표시할 패킷 데이터 전달 방식은 미구현입니다.
-8. **컴파일·실행 재검증:** 최신 `gui.c`의 `<stdio.h>` 누락, 오류 경로 및 반복 Start/Stop 동작을 점검해야 합니다.
-
-> 패킷 수신 스레드의 종료가 확인되기 전에 `pcap_close()`, `CloseHandle()` 또는 `free(ctx)`를 수행하지 않도록 주의합니다. `CloseHandle()` 자체가 스레드를 종료시키지는 않습니다.
-
-## 개발 로드맵
-
-- [x] Npcap 개발 환경 구축 및 어댑터 열거
-- [x] 콘솔 패킷 수신·16진수 출력
-- [x] Ethernet EtherType 기반 기본 프로토콜 구분
-- [x] 공통 캡처/파서 모듈 분리
-- [x] Win32 GUI 창·어댑터 목록 구현
-- [x] GUI 캡처 스레드 및 종료 통지 코드 작성
-- [ ] GUI 최신 소스 컴파일 및 기본 실행 확인
-- [ ] 종료 감시 해제와 비상 타이머 이중 실패 복구 완성
-- [ ] Start → Stop → 재시작 → 창 닫기 시나리오 반복 테스트
-- [ ] 워커에서 GUI로 패킷 정보를 안전하게 전달
-- [ ] 패킷 목록과 선택 패킷 상세 보기
-- [ ] IPv4/IPv6, TCP/UDP, ARP 상세 파싱
-- [ ] 캡처 필터(BPF), 통계 및 패킷 저장 기능
-
-## 개발 원칙
-
-- **기능 단위로 구현하고 실제 동작을 검증**합니다.
-- **소유권과 수명**을 명확히 구분합니다. (`pcap_t*`, `CaptureContext*`, `HANDLE`, 콤보박스의 복사된 장치 이름)
-- **GUI 스레드를 장시간 블로킹하지 않는 구조**를 지향합니다.
-- **실제로 검증한 기능과 작성만 한 코드를 구분**해서 기록합니다.
-- 콘솔과 GUI를 별도 타깃으로 유지하면서 캡처·파서 로직의 재사용성을 높입니다.
+| 항목 | 현재 상태 |
+|---|---|
+| Npcap 네트워크 어댑터 열거·선택 | 구현 및 실행 확인 |
+| Win32 GUI (`PacketScopeGUI.exe`) / ListView | 구현 및 실행 확인 |
+| 캡처 스레드 / Start·Stop | 구현 및 동작 확인 |
+| `PostMessageW`를 이용한 패킷 행 전달 | 구현 및 실시간 화면 확인 |
+| Ethernet II / IPv4 판별 | 구현 및 동작 확인 |
+| IPv4 출발지·목적지 주소 | 구현 및 실제 표시 확인 |
+| IPv4 상위 프로토콜 TCP·UDP·ICMP 분류 | 구현 (TCP·UDP 실제 표시 확인) |
+| TCP·UDP 출발지·목적지 포트 | 구현 및 실제 표시 확인 |
+| IPv6 주소 파싱, ARP GUI 분석, TCP 플래그, 상세 보기 | 아직 미구현 |
+| 종료 예외 경로, 헤더 정밀 검증, 성능·부하 테스트 | 추가 점검 필요 |
 
 ---
 
-**최종 문서 갱신:** 2026-11-09  
-**상태:** 학습·개발용 프로토타입 (WIP)
+## 초기 학습 및 개발 이력 (원문 보존)
+
+정리 :
+
+1. pcap_if_t 변수 2개 선언,
+장치 목록의 첫 노드,
+목록을 순회할 때 쓸 노드.
+그리고 errbuf를 pcap의 버퍼 사이즈만큼 선언하여 오류 메시지를 저장
+
+2. 다음, 모든 장치를 찾았는지 아닌지를 판단(if(pcap_findalldevs))
+
+3. 성공했다면, integer 타입의 count 변수를 하나 만듦.
+그리고, 현재 노드에 첫 노드를 담음.(current = alldevs)
+다음, 반복문을 통하여, current에 NULL이 담기는, 즉, 끝까지 갈 때까지, count++을 해가면서, 현재 장치의 순번과 이름을 printf를 통하여 출력.
+그러나 이 중, description이 없는 경우가 있으므로,
+description이 없는 경우에는, 없다고 출력하도록 if문을 걸어줌.
+마지막으로, count 변수를 통하여 검색된 모든 장치의 갯수를 출력.
+
+4. integer 타입의 num 변수를 선언.
+scanf를 통하여 num에 사용자가 검색할 네트워크 어댑터의 번호를 받음.
+번호는 위에서 찾아낸 목록 순번.
+만약, 번호를 invalid하게 입력하였다면, 오류를 출력하고,
+pcap_freealldevs를 통하여 장치 해제,
+return 1로 종료.
+번호 자체가 없는 번호라면, 해당 오류를 출력하고 위와 같은 조치.
+제대로 입력 되었다면, 
+current에 다시 첫 노드를 담고(위에서 끝까지 갔기 때문)
+입력받은 num만큼 current=current->next를 통하여 반복.
+역시 description이 없을 수 있으므로 if문을 통해 사전 작업.
+
+5. 찾아낸 번호의 어댑터 정보를 출력해주어야하므로,
+pcap_pkthdr 타입의 *header 구조체, u_char 타입의 *data 변수를 const로 선언(변경불가), 그리고 integer 타입의 result 변수 선언.
+pcap_t 타입으로 *handle 구조체에 pcap_open_live 함수를 통해 불러온 정보를 삽입.
+여기에는 current에 담긴 name과 65535(IP 패킷이 이론상 담을 수 있는 최대 크기), 0 (무차별 모드의 비활성화, 이를 통해 내 PC에 직접적으로 전송된 패킷만 캡처함), 1000 (Read Timeout 설정, 프로그램이 무한 대기-block-상태에 빠지는 것을 방지하고, 최소 1초마다 제어권을 얻어 다음 동작을 처리하게 하기 위함), errbuf를 인수로 담는다.
+
+
+6. 다음, if문을 통해 handle에 값이 담겼을 때만 가정하고 
+result에 pcap_next_ex 메소드를 통해 handle, &header, &data를 담는다.
+그 다음, if문을 통해, result에 담긴 값을 검사한다.
+1인 경우 : header->caplen과 header->len을 출력,
+for문을 통해 패킷 정보를 출력.
+for문은, unsigned int i; i<16 && i<header->caplen; i++을 통해 진행시키고, %02X 출력형식을 통해 (unsigned int)data[i]를 printf로 출력.
+0인 경우 : 패킷을 받지 못했다는 오류 메시지 출력.
+-1인 경우 : 캡쳐 오류, pcap_geterr(handle)을 통해 받은 오류 메시지를 %s 출력 형식으로 출력.
+-2인 경우 : 캡쳐가 끝난 경우이므로 해당 메시지 출력.
+이것이 다 끝나면, pcap_close(handle)로 pcap 종료.
+- 그 외 : errbuf에 담긴 오류를 출력, pcap_freealldevs로 전부 해소하고, return 1로 프로그램 종료.
+
+위의 모든 작업이 끝나고 아래로 내려가게 되면,
+pcap_freealldevs(alldevs); 를 통해 모든 장치를 해소하고,
+return 0으로 프로그램 종료.
+
+
+============================================================
+[추가 정리] PacketScope 개발 진행 기록 (2026-11-06 기준)
+============================================================
+
+7. 첫 실제 패킷 수신과 16진수 출력
+- Wi-Fi 어댑터(Realtek 8852CE WiFi 6E PCI-E NIC)를 선택하여 실제 패킷 수신 성공.
+- pcap_next_ex(handle, &header, &data)의 반환값 1이면 header와 data를 사용할 수 있음.
+- header->caplen: 실제 캡처되어 이용 가능한 바이트 수.
+- header->len: 원래 패킷 길이(캡처 인터페이스가 보고한 길이).
+- 처음 16바이트만 출력할 때:
+    for (unsigned int i = 0; i < 16 && i < header->caplen; i++) {
+        printf("%02X ", (unsigned int)data[i]);
+    }
+    printf("\n");
+- i < 16과 i < header->caplen을 함께 검사하는 것은 범위 밖 읽기를 피하기 위해서임.
+- %02X: 최소 두 자리, 0 채움, 대문자 16진수 출력.
+
+8. Ethernet II 헤더와 EtherType 분석
+- 일반적인 Ethernet II 헤더는 최소 14바이트.
+  data[0]~data[5]   : 목적지 MAC 주소(6바이트)
+  data[6]~data[11]  : 출발지 MAC 주소(6바이트)
+  data[12]~data[13] : EtherType(2바이트)
+- 분석 전 필수 확인: pcap_datalink(handle) == DLT_EN10MB, header->caplen >= 14.
+- DLT = Data Link Type, EN = Ethernet, 10MB = 과거 10Mb/s Ethernet에서 유래한 이름.  DLT_EN10MB = 1
+- 본 프로그램에서는 Ethernet 패킷의 첫 14바이트를, 위와 같이 해석하고 있는데, 모든 네트워크 캡처가 해당 방식은 아님.
+ - 예를 들어, 루프백이나 Wi-Fi 모니터 모드 캡처에서는 헤더의 구조가 달라질 수 있음. 따라서 무조건 data[12], data[13]을 읽으면 잘못 해석할 여지가 있음.
+ - 따라서 두가지 조건을 검사해야함.
+  - 첫 번째 조건 : 데이터 형식이 Ethernet?
+  - 두 번째 조건 : 헤더를 읽을 만큼 충분한 바이트가 있는가?
+  - 참고 : DLT_EN10MB는 Ethernet 링크 계층 형식을 뜻할 뿐, 모든 프레임이 Ethernet II라는 보장을 해주지는 않음. VLAN 태그나 길이 필드를 사용하는 프레임은 추가 해석이 필요.
+- EtherType 계산:
+    unsigned int etherType = ((unsigned int)data[12] << 8) | data[13];
+  첫 바이트를 8비트 왼쪽 이동하고 두 번째 바이트와 비트 OR로 결합.
+- 알려진 타입:
+    0x0800 = IPv4
+    0x0806 = ARP
+    0x86DD = IPv6
+    나머지 = Unknown (현재 분류표에 없다는 뜻이지 캡처 실패는 아님)
+- 0x는 16진수 정수 리터럴을 나타냄. 예: 0x10 == 16은 참.
+- 비교에는 따옴표를 사용하지 않음: etherType == 0x0806.
+  '0x0806'는 숫자가 아니라 C의 다중 문자 상수여서 부적절함.
+- 출력은 printf("EtherType: 0x%04X\n", etherType);
+- 실제 캡처 예시:
+    FF FF FF FF FF FF 68 CC AE C3 ED E7 08 06 00 01 -> ARP
+    01 00 5E 7F FF FA 40 1A 58 D5 2C DE 08 00 45 00 -> IPv4
+    FF FF FF FF FF FF 00 E5 F1 16 E5 EC 88 99 23 B4 -> 0x8899 / Unknown
+- FF:FF:FF:FF:FF:FF 목적지 MAC은 브로드캐스트를 의미.
+- 01:00:5E로 시작하는 목적지 MAC은 IPv4 멀티캐스트 범위에 해당할 수 있음.
+- IPv4 EtherType만 보고 TCP/UDP 여부까지 단정할 수는 없음. 추가 헤더 분석이 필요.
+- 향후 VLAN 태그 등 일반적인 Ethernet II 외의 프레임 변형도 별도로 다뤄야 함.
+
+9. 프로젝트 모듈화(리팩터링)
+- 목표: 기존 동작을 유지하면서 역할별 파일로 분리해 나중에 GUI를 쉽게 붙이기.
+- 현재 구조(대화에서 확인한 파일명 기준):
+    PacketScope/
+      src/main.c                : 전체 실행 흐름, 콘솔 사용자 입력, 결과 처리, 자원 해제
+      src/gui_main.c            : GUI 실행 진입점 (GUI 빌드용)
+      src/capture.c             : 장치 탐색/출력/선택 및 캡처 API 호출
+      src/parser.c              : 수신한 패킷 해석 및 출력
+      src/gui.c                 : Win32 GUI 창, 콤보박스, 버튼 및 선택 항목 표시
+      include/capture.h         : 캡처 관련 함수 선언
+      include/packet_parser.h   : 패킷 분석 함수 선언
+      include/gui.h             : GUI 시작 함수 선언
+      build.cmd                 : MSVC 빌드 스크립트
+- 헤더(.h)는 다른 소스에서 사용할 함수/타입을 선언하고, 소스(.c)는 실제 기능을 구현.
+- 헤더 가드 예: #ifndef CAPTURE_H / #define CAPTURE_H / #endif.
+- 각 .c 파일을 빌드 명령에 포함해야 링커가 함수 구현을 찾을 수 있음.
+  예: src\main.c src\capture.c src\parser.c
+  (GUI 빌드에는 src\gui.c가 포함되어 있음)
+- /I"include"와 Npcap SDK의 Include 경로가 필요.
+- 문법/선언 오류는 컴파일 단계, 함수 구현을 찾지 못하는 LNK2019는 링크 단계의 문제.
+- 실제 겪은 오류: get_device_by_indx와 get_device_by_index의 철자 차이로 LNK2019 발생.
+- Windows SDK에도 parser.h가 있어 같은 이름의 헤더가 잘못 검색되는 충돌이 발생함.
+  프로젝트 헤더를 packet_parser.h로 변경하여 해결.
+- 리팩터링 후 실제로 패킷 캡처 및 IPv4/ARP 판별이 다시 동작하는 것 확인.
+- 안정적인 상태는 Git에 커밋함.
+
+10. capture.c에 분리한 함수와 역할
+- int find_devices(pcap_if_t **alldevs, char *errbuf);
+    pcap_findalldevs(alldevs, errbuf)의 결과를 반환.
+    main에서는 find_devices(&alldevs, errbuf)처럼 포인터 변수의 주소를 전달.
+- int list_devices(pcap_if_t *alldevs);
+    연결 리스트를 순회하며 장치 이름/설명을 출력하고 개수를 반환.
+- pcap_if_t *get_device_by_index(pcap_if_t *alldevs, int index);
+    1번부터 시작하는 장치 번호를 받아 해당 노드 포인터 반환.
+    index가 1 미만이거나 탐색 도중 리스트 끝에 닿으면 NULL 반환.
+    current = current->next를 index-1회 수행. 반복문 안에서 정상 반환을 조기에 하면 안 됨.
+    main에서는 반환 후 NULL 확인하고 접근해야 함.
+- pcap_t *open_capture(const char *device_name, char *errbuf);
+    pcap_open_live(device_name, 65535, 0, 1000, errbuf)를 호출하고 핸들 반환.
+- int receive_packet(pcap_t *handle, struct pcap_pkthdr **header, const u_char **data);
+    pcap_next_ex(handle, header, data)의 반환값을 그대로 반환.
+    main에서 receive_packet(handle, &header, &data)처럼 호출.
+- 패킷 분석은 parser.c의 analyze_packet(handle, header, data) 담당.
+- 자원 관리: 현재 main에서 pcap_close(handle)와 pcap_freealldevs(alldevs) 호출.
+  실패 경로에서도 필요한 해제가 빠지지 않도록 주의.
+
+11. 포인터와 const 학습
+- pcap_if_t *current = alldevs; : 노드 포인터를 복사해 현재 위치를 이동할 수 있음.
+- current->next : 현재 노드의 다음 노드를 가리키는 포인터.
+- NULL : C에서 널 포인터 상수를 표현할 때 사용. 소문자 null은 기본 C 식별자가 아님.
+- 이중 포인터는 호출자 쪽 포인터 변수의 값을 바꾸기 위해 사용.
+  main: struct pcap_pkthdr *header = NULL;
+        receive_packet(handle, &header, &data);
+  capture.c: struct pcap_pkthdr **header 매개변수
+             pcap_next_ex(handle, header, data);
+  main의 &header는 pcap_pkthdr **, capture.c의 header도 이미 pcap_pkthdr **이므로
+  capture.c에서 다시 &header를 넘기면 포인터 깊이가 하나 더 증가함.
+- pcap_if_t ** 매개변수를 받는 find_devices()도 동일한 원리:
+    main: find_devices(&alldevs, errbuf)
+    capture: pcap_findalldevs(alldevs, errbuf)
+    capture에서 &alldevs를 넘기면 ***가 되어 타입 경고(C4047/C4024) 발생.
+- int number=50; int *ptr=&number; int **header=&ptr; 에서
+    header : ptr 변수의 주소
+    *header : number의 주소
+    **header : number의 값
+    **header=200을 실행하면 number도 200으로 바뀜.
+- const u_char *data : 이 포인터를 통해 가리키는 데이터의 수정은 금지,
+  포인터 변수 자체를 다른 주소로 바꾸는 것은 가능.
+- u_char * const data : 포인터 변수 자체의 재지정 금지, 가리키는 데이터 변경은 가능.
+- const u_char * const data : 두 제한 모두 적용.
+- Npcap이 제공한 packet data는 후속 캡처 호출 또는 핸들 종료로 무효화될 수 있으므로
+  필요할 때는 유효한 동안 분석하거나 별도 메모리에 복사해야 함.
+
+12. Win32 GUI 구현 현황 (2026-11-06, 이후 기능 확장 내용은 17~19절 참고)
+- 목표: 기존 콘솔 패킷 분석기를 유지하면서 별도의 Win32 GUI 제공.
+- gui.h: int run_gui(void); 선언.
+- gui_main.c: GUI 프로그램 진입점. gui.c의 run_gui()를 호출하는 빌드 구성.
+- gui.c의 실제 구현:
+  1) GetModuleHandleW(NULL)로 실행 모듈 핸들 획득.
+  2) WNDCLASSW의 lpfnWndProc에 WindowProc 설정, RegisterClassW로 창 클래스 등록.
+  3) CreateWindowExW로 PacketScope 메인 창(900x600) 생성.
+  4) ShowWindow, UpdateWindow로 표시하고 GetMessageW/TranslateMessage/DispatchMessageW 루프 실행.
+  5) WM_CREATE에서 Start Capture 버튼(ID 1001), 드롭다운 콤보박스(ID 1002) 생성.
+  6) find_devices(&alldevs, errbuf)로 Npcap 장치 검색.
+  7) pcap_if_t 연결 리스트를 순회해 description(없으면 name)을 CB_ADDSTRING으로 콤보박스에 추가.
+  8) CB_SETCURSEL로 첫 번째 항목을 기본 선택하고 pcap_freealldevs(alldevs) 호출.
+  9) WM_COMMAND에서 버튼 ID 1001 + BN_CLICKED를 확인해 선택 항목을 읽음.
+ 10) WM_DESTROY에서 PostQuitMessage(0)를 호출해 메시지 루프 종료.
+- 2026-11-06 실제 검증: GUI 창 표시, 어댑터 목록 표시, 항목 선택 후
+  'Selected Adapter' 메시지 박스에 선택한 설명 문자열이 정확하게 나타남.
+  예: Microsoft Wi-Fi Direct Virtual Adapter #2.
+- 당시 Start Capture 버튼은 선택 항목 확인까지만 구현되어 있었음.
+  이후 GUI에서 장치 식별자 저장 및 캡처 핸들 열기까지 확인됨(17~19절 참고).
+- 중요: 콤보박스의 표시 문자열(description)과 캡처 API에 전달할 장치 식별자(name)는 다름.
+  pcap_freealldevs() 호출 뒤 pcap_if_t 노드나 그 내부 name 포인터를 계속 사용하면 안 됨.
+- 사용 API 및 개념:
+  * GetDlgItem(hwnd, 1002): 콤보박스 핸들 조회.
+  * CB_GETCURSEL: 선택한 항목 인덱스 반환(선택 없으면 CB_ERR).
+  * CB_GETLBTEXTLEN: 선택 문자열의 길이 조회.
+  * CB_GETLBTEXT: 선택 문자열을 wchar_t 배열에 복사.
+  * wchar_t adapterName[256]: 와이드 문자 배열. 종료 문자 공간을 위해 길이 < 256 검사.
+  * MessageBoxW(hwnd, adapterName, L"Selected Adapter", ...): 선택 항목 표시.
+  * SendMessageA(... CB_ADDSTRING ...)와 SendMessageW(... CB_GETLBTEXT ...) 사용 중.
+    유니코드 컨트롤/문자 인코딩 처리는 추후 정리할 수 있으나 현재 표시 동작은 검증됨.
+- 학습한 Win32 개념:
+  * HINSTANCE: 프로그램 모듈 핸들, GetModuleHandleW(NULL)로 획득.
+  * WNDCLASSW: 창 클래스 정의; lpfnWndProc는 메시지 처리 함수 포인터.
+  * L"...": Windows W API에서 사용하는 와이드 문자열 리터럴.
+  * WM_CREATE: 창 생성 중 발생하므로 ShowWindow() 이전에 처리될 수 있음.
+  * WM_COMMAND/BN_CLICKED: 버튼 클릭 등 컨트롤 이벤트 처리.
+  * 문자열 버퍼는 임시 저장 공간이며 C에는 Java의 String 기본 자료형이 없음.
+
+13. 기존 기록의 정정 / 주의점
+- [원본 4번] 노드 이동 횟수는 입력 num번이 아니라 num-1번(1부터 시작하는 번호 기준).
+- [원본 5번] pcap_pkthdr와 data는 장치 정보가 아니라 캡처된 패킷 메타데이터 및 바이트.
+- [원본 5번] 65535는 캡처 버퍼로 확보할 최대 패킷 데이터 길이(snaplen) 설정.
+  'IP 패킷의 최대 크기'라는 설명으로만 이해하면 부정확함.
+- [원본 5번] promisc=0은 무차별 모드 비활성화 요청이며 내 PC에 직접 온 패킷만
+  캡처한다고 단정할 수 없음(브로드캐스트/멀티캐스트 등 포함 가능).
+- [원본 5번] timeout=1000(ms)은 읽기 타임아웃 설정이지만 모든 환경에서 반드시
+  1초마다 제어권이 돌아온다고 보장하는 것은 아님.
+- [원본 6번] pcap_next_ex()의 결과 0은 읽기 타임아웃으로, 반드시 오류는 아님.
+- [원본 6번] pcap_open_live() 실패 처리와 pcap_next_ex() 결과 처리의 else를 구분.
+- [추가 주의] 패킷 수신에 실패(-1)했는데도 마지막에 return 0을 실행하는 구조는
+  종료 코드상 성공으로 보일 수 있으므로 추후 오류 반환 정책을 개선할 수 있음.
+
+14. 바로 다음 할 일 (2026-11-06 최신 진행 기준)
+- [완료] 별도 GUI 실행 파일 빌드 및 창 표시.
+- [완료] Npcap 어댑터 목록 콤보박스 표시 및 선택 설명 문자열 출력.
+- [완료] CB_SETITEMDATA/CB_GETITEMDATA로 실제 장치 식별자 포인터 연결.
+- [완료] malloc/memcpy로 장치 이름 복사, free_adapter_data() 정리 함수 구현.
+- [완료/실행 검증] 선택한 장치의 open_capture() 성공, pcap_close() 호출.
+- [코드 작성, 미검증] capture_thread()에서 receive_packet() 1회 호출, result == 1이면 caplen 출력.
+- [우선] GUI 스레드의 WaitForSingleObject(INFINITE) 제거를 포함한 비동기 완료/정리 방식 설계.
+- [우선] 스레드/pcap_t* 핸들 소유권, 종료 확인, 실패 경로, 중복 시작 방지 정리.
+- [우선] WM_CREATE 실패/부분 초기화 시 자원 해제 경로와 free_adapter_data() 이중 호출 가능성 재검토.
+- [다음] 워커 스레드가 PostMessageW 등으로 수신 결과를 UI에 전달하고 GUI에서 확인.
+- [다음] Start/Stop Capture, 반복 수신, 패킷 목록 및 상세 보기 추가.
+- [장기] printf() 중심 parser 결과를 GUI에서 재사용 가능한 구조체로 분리.
+
+15. 2026-11-06 실행 및 DLL 오류 진단 기록
+- 개발 환경: Windows 11, MSVC C17, Npcap SDK 1.17, VS Code C/C++ 디버거.
+- VS Code는 콘솔/GUI 각각 별도 빌드·디버깅 구성:
+  * Console: PacketScope.exe
+  * GUI: PacketScopeGUI.exe
+  * GUI 빌드: build.cmd gui -> gui_main.c, gui.c, capture.c 기반.
+- 현상: GUI 실행 전 창이 보이지 않고 중단점에도 도달하지 않는 것으로 보였음.
+- 실행 파일을 PowerShell에서 직접 실행하자 즉시 종료.
+- $LASTEXITCODE 결과 -1073741515 = 0xC0000135 (STATUS_DLL_NOT_FOUND).
+- 현재 터미널에 다음 PATH를 임시 추가하자 GUI가 정상 실행됨:
+    $env:PATH = "C:\Windows\System32\Npcap;$env:PATH"
+    .\PacketScopeGUI.exe
+- 원인: 직접 실행 시 Npcap 관련 DLL을 찾기 위한 검색 경로가 부족했음.
+  구체적으로 어떤 DLL에서 실패했는지는 직접 확인하지 않았으므로 단정하지 않음.
+- 이후 'Run PacketScope GUI' 디버깅 로그에서 다음 사항 확인:
+  * PacketScopeGUI.exe 로드, Symbols loaded.
+  * C:\Windows\System32\Npcap\wpcap.dll 및 Packet.dll 로드.
+  * GUI 창을 사용자가 닫은 후 종료 코드 0 (0x0).
+- 주의: 다른 시점의 디버깅 로그는 PacketScope.exe(콘솔 타깃)였음.
+  디버그 콘솔 맨 앞에 표시된 실행 파일 이름으로 현재 타깃을 확인할 수 있음.
+- launch.json에는 Npcap PATH 경로가 설정되어 있었음. 성공 사례가 있으므로
+  작동하는 빌드/실행 설정을 근거 없이 반복 수정하지 말 것.
+- 중단점/단계 실행의 정확한 동작은 별도 검증 완료로 기록하지 않음.
+- 디버그 콘솔에 SKYSEA Client View 관련 DLL 로드 로그도 확인했으나,
+  이것이 문제 원인이라는 증거는 없음. 관련 소프트웨어를 수정하지 않음.
+
+16. 현재 달성 범위와 주의 사항 (최신)
+- 콘솔 버전: 실제 패킷 수신, 앞 16바이트 16진수 출력, Ethernet 형식 확인 후
+  EtherType(IPv4/ARP/IPv6 등) 분석까지 이전 기록에서 검증함.
+- GUI 버전: 창/장치 목록/선택 설명 표시가 검증되었고, 선택한 Npcap 장치로
+  open_capture() 후 성공 메시지 확인 및 pcap_close()까지 실제 실행으로 확인함.
+- 스레드: CreateThread(), WaitForSingleObject()를 사용하는 시험 코드가 작성됨.
+  capture_thread()의 실제 receive_packet() 코드와 printf 출력은 최근 작성되었으나
+  이 버전의 실행/패킷 수신 성공은 아직 확인하지 않음.
+- GUI 실시간 패킷 목록 표시, 비차단 이벤트 전달, 안전한 종료/Stop 기능은 미구현.
+- 코드 스니펫과 실행 검증은 구별해 기록. 원본 최신 전체 소스는 별도 업로드되지 않았으므로
+  마지막 대화에 공유된 부분을 기준으로 진행 상황을 기록함.
+- 개발 방식: 사용자가 직접 코드를 작성하고, 한 단계씩 실제 동작/로그를 확인하며 진행.
+
+17. GUI 콤보박스와 Npcap 장치 식별자 연결 (2026-11-06 추가)
+- WM_CREATE에서 pcap_if_t 목록을 순회하여 description(없으면 name)을 표시 문자열로 추가.
+- CB_ADDSTRING 반환 인덱스를 LRESULT index로 받으며 CB_ERR / CB_ERRSPACE 검사.
+- 각 current->name은 Npcap의 장치 식별자(예: \Device\NPF_{...})로,
+  pcap_freealldevs(alldevs) 이후에는 원본 메모리를 참조할 수 없음.
+- size_t len = strlen(current->name); char *deviceName = malloc(len + 1);
+  malloc 반환 NULL 검사 후 memcpy(deviceName, current->name, len + 1)로 널 종료까지 복사.
+- CB_SETITEMDATA(combo, index, (LPARAM)deviceName)로 복사된 포인터를 해당 항목에 보관.
+  실패 시 free(deviceName)와 CB_DELETESTRING(index) 처리 코드를 추가함.
+- malloc 실패 시에도 방금 추가한 콤보박스 항목을 CB_DELETESTRING으로 제거.
+- 세 실패 지점(CB_ADDSTRING, malloc, CB_SETITEMDATA)에서 initializationFailed = 1;
+  설정한 후 while 종료. 실패 시 pcap_freealldevs(alldevs)와 WM_CREATE return -1 적용.
+- WM_COMMAND에서 CB_GETCURSEL로 인덱스를 얻고 CB_GETITEMDATA로 저장된 포인터를 읽음.
+  CB_ERR 및 0 검사 후 char *deviceName = (char *)itemData 사용.
+- GUI 표시용 wchar_t adapterName[256]은 CB_GETLBTEXTLEN / CB_GETLBTEXT로 별도 조회.
+  표시 문자열(adapterName)과 캡처용 식별자(deviceName)는 서로 다른 데이터임.
+- free_adapter_data(HWND combo)를 별도 함수로 작성: CB_GETCOUNT 후 각 항목을
+  CB_GETITEMDATA로 읽고 malloc 포인터 free, CB_SETITEMDATA(..., 0)으로 초기화하도록 설계.
+  WM_DESTROY에서 호출하고, WM_CREATE 실패 시에도 호출하는 코드 작성.
+- 수정 이력: free_adapter_data에서 free(deviceName)을 두 번 호출한 실수를 발견함.
+  중복 호출을 제거하도록 수정 안내했고 사용자가 이후 진행함. 최종 소스 재점검 필요.
+
+18. GUI에서 Npcap 캡처 핸들 열기 및 스레드 기초 (2026-11-06 추가)
+- WM_COMMAND의 Start Capture 클릭 시 저장한 deviceName으로
+  char errbuf[PCAP_ERRBUF_SIZE] = {0}; pcap_t *handle = open_capture(deviceName, errbuf);
+  호출하고 NULL이면 오류 메시지 표시 후 반환하도록 구현.
+- 정상 경로에서는 pcap_close(handle)로 닫는 방식으로 시작했으며,
+  사용자 실행 테스트에서 캡처 핸들 열기 성공 메시지 및 GUI 정상 동작 확인.
+- 스레드 도입을 위해 DWORD WINAPI capture_thread(LPVOID param) 선언/정의.
+  작업 함수에서 pcap_t *handle = (pcap_t *)param; 으로 전달받은 핸들 복원.
+- WM_COMMAND에서 HANDLE thread = CreateThread(NULL, 0, capture_thread, handle, 0, NULL);
+  작성 후 thread == NULL 오류 검사를 추가함.
+- 스레드 생성 실패 시 이미 열린 pcap_t*를 pcap_close(handle)로 닫아야 함.
+  실패 경로에 해당 호출을 추가하라는 리뷰가 있었으므로 최종 코드에서 확인 필요.
+- DWORD waitResult = WaitForSingleObject(thread, INFINITE); 와
+  WAIT_FAILED / WAIT_OBJECT_0 분기 코드를 작성.
+  WAIT_OBJECT_0 이후 CloseHandle(thread), pcap_close(handle) 정리 순서를 학습함.
+- 실수 수정: 실패 시 NULL 캡처 핸들을 닫거나, 성공 경로에서 pcap_close(handle)를
+  중복 호출했던 코드를 바로잡음.
+- 중요한 제한: WAIT_OBJECT_0은 스레드 종료를 뜻하며 실제 작업 성공을 뜻하지 않음.
+  WAIT_FAILED는 스레드가 아직 실행 중일 가능성을 배제하지 못함.
+  이런 상태에서 pcap_close(handle)를 즉시 수행하면 위험하며, 단순 return은 누수를 남길 수 있음.
+- GUI 이벤트 처리 안의 WaitForSingleObject(thread, INFINITE)는 작업이 오래 걸리면
+  UI 메시지 루프를 막으므로 실제 실시간 캡처에는 부적합. 구조 변경 전까지 실행 주의.
+- CloseHandle(thread)는 스레드를 강제 종료하지 않고 Windows 핸들 참조만 닫음.
+
+19. capture_thread()의 패킷 하나 수신 코드 (2026-11-06 마지막 작성 단계)
+- 마지막으로 사용자가 작성한 함수의 핵심 코드:
+    DWORD WINAPI capture_thread(LPVOID param)
+    {
+        pcap_t *handle = (pcap_t *)param;
+        struct pcap_pkthdr *header = NULL;
+        const u_char *data = NULL;
+        int result = receive_packet(handle, &header, &data);
+        if (result == 1) {
+            printf("%u", header->caplen);
+        }
+        return 0;
+    }
+- receive_packet()는 pcap_next_ex() 결과를 그대로 반환하는 기존 capture.c 함수.
+- 반환값: 1 패킷 수신 성공 / 0 읽기 타임아웃 / -1 오류 / -2 종료 또는 EOF.
+- result == 1일 때만 header->caplen을 읽어 printf("%u", ...)로 출력하는 코드 작성.
+- printf를 사용하려면 <stdio.h>가 필요. GUI 서브시스템 빌드에서는
+  printf가 표시될 콘솔이 없을 수 있어 결과를 확인하기 어려움.
+- 이 최종 capture_thread() 버전의 실제 실행 여부와 패킷 수신 성공 여부는 미확인.
+- 아직 결과를 GUI에 전달하는 PostMessageW 처리, HWND 전달, 재시작/중지 로직은 미작성.
+- 다음 세션에서는 즉시 코드 실행을 지시하기보다 먼저 스레드/캡처 핸들 수명과
+  GUI 비차단 종료 정책을 설계하고 검증한 다음 실제 수신 결과를 UI로 전달할 것.
+
+---
+
+## 20. 2026-11-09: 실시간 GUI 패킷 목록 완성 (Mission 06-3)
+
+- `gui.c`에서 Win32 `WC_LISTVIEWW` + `LVS_REPORT` 방식의 패킷 테이블 생성.
+- `InitCommonControlsEx(ICC_LISTVIEW_CLASSES)` 초기화와 `comctl32.lib` 링크가 필요.
+- ListView 열: `No.`, `Source`, `Destination`, `Protocol`.
+- Unicode 문자열을 올바르게 표시하기 위해 `LVCOLUMNW`, `LVITEMW` 및 `SendMessageW(LVM_INSERTCOLUMNW/LVM_INSERTITEMW/LVM_SETITEMTEXTW, ...)` 사용.
+- 최초에는 `WM_CREATE`에서 테스트 `PacketRow`를 한 건 게시하여 UI 동작을 확인했고, 이후 테스트 행 코드를 삭제함.
+- 실제 캡처에서는 `capture_thread()`가 `receive_packet()` 반복 호출 후 `PacketRow`를 할당·작성하고 `PostMessageW(hwnd, WM_PACKET_RECEIVED, ..., packet)`로 GUI 스레드에 전달.
+- `WM_PACKET_RECEIVED`는 ListView에 행을 추가하고 `free(packet)`으로 행 전달용 메모리를 해제.
+- GUI 생성·삭제, 스레드 및 캡처 핸들 관리는 `GuiState`가 담당. 캡처 관련 `CaptureContext`에는 `pcap_t *handle`, `atomic_bool running`, `atomic_int pendingPackets`, `HWND hwnd`를 둠.
+- 사용자가 선택한 어댑터의 실제 식별자를 `CB_GETITEMDATA`로 얻고 `open_capture()`에 전달.
+- `CreateThread()`로 캡처 스레드 실행, `RegisterWaitForSingleObject()`/`WM_CAPTURE_FINISHED` 또는 실패 시 `WM_TIMER` 경로에서 완료 확인 및 정리. Stop 버튼은 `running=false`와 `pcap_breakloop()`로 중지 요청.
+- 메시지 대기 개수 제한: `pendingPackets >= 100`이면 해당 `PacketRow`를 해제하고 UI 게시를 건너뜀. 성공적으로 게시한 경우 +1, GUI가 처리하면 -1, 게시 실패하면 -1 후 해제.
+- 캡처 스레드 종료가 확인된 뒤 `drain_packet_messages(hwnd)`에서 미처리 `WM_PACKET_RECEIVED` 메시지를 `PeekMessageW(..., PM_REMOVE)`로 제거하고 관련 메모리를 해제.
+- `WM_CLOSE`는 캡처가 실행 중이면 종료 요청을 보내며, `GuiState.closing`이 참일 때 추가 화면 표시를 생략.
+- 실제 실행에서 여러 패킷이 ListView에 연속 추가되는 모습, Stop 버튼으로 수신이 멈추는 모습까지 확인됨.
+
+### 메모리 소유권 원칙
+
+- `PacketRow` 할당 실패(`calloc`이 `NULL`) 시 포인터 접근 금지.
+- `PostMessageW` 실패 시 캡처 스레드가 `free(packet)`.
+- 게시 성공 후 GUI가 메시지를 처리하면 GUI가 `free(packet)`.
+- 종료 시 큐에 남아 전달되지 않은 행은 `drain_packet_messages`에서 해제.
+- `PostMessageW` 성공은 **게시 성공**이지 화면에 그려졌다는 보장은 아님.
+
+## 21. 2026-11-09: Ethernet II 및 IPv4 파서 연결 (Mission 07-1 ~ 07-2)
+
+- `parser.c`에 `is_ipv4_packet(data, length)` 구현: `length >= 14` 확인 뒤 `data[12] << 8 | data[13]` 값이 `0x0800`인지 검사.
+- `parse_ipv4_addresses(data, length, source[4], destination[4])` 구현:
+  - NULL 포인터와 최소 34바이트 여부 검사.
+  - EtherType이 IPv4이고 `data[14]` 상위 4비트가 버전 4인지 확인.
+  - `data[14] & 0x0F`에서 IHL(4바이트 단위)을 읽어 최소 5 및 실제 캡처 길이 검사.
+  - Ethernet 헤더 14바이트 기준 출발지 `data[26..29]`, 목적지 `data[30..33]` 복사.
+- GUI `capture_thread()`에서 `parse_ipv4_addresses()` 결과가 0이면 해당 패킷을 건너뜀. 따라서 **현재 GUI 목록은 IPv4만 표시**함.
+- 네 바이트의 IPv4 주소를 `swprintf(L"%u.%u.%u.%u", ...)`로 문자열화함.
+- `pcap_datalink(handle) == DLT_EN10MB` 확인을 추가하여 현재 파서가 가정하는 Ethernet 링크 계층인지 검사.
+- 실제 Realtek 8852CE WiFi 6E PCI-E NIC 캡처에서 사설 IPv4 주소와 외부 IPv4 주소가 정상 표시되는 것을 확인.
+
+## 22. 2026-11-09: IPv4 프로토콜 및 TCP/UDP 포트 분석 (Mission 07-3 ~ 07-4)
+
+- `get_ipv4_protocol(data, length)` 구현: 기본 IPv4/길이 확인 후 IPv4 Protocol 필드 `data[23]` 반환. 파싱 불가 시 -1.
+- GUI는 반환값 `1=ICMP`, `6=TCP`, `17=UDP`, 그 외 `IP <번호>` 형식으로 표시.
+- `parse_transport_ports(data, length, &sourcePort, &destinationPort)` 구현:
+  - NULL, Ethernet II의 IPv4, 최소 헤더 길이, 버전/IHL 검사.
+  - 전송계층 시작 위치 `transportHeaderOffset = 14 + (ihl * 4)` 계산.
+  - `data[23]`가 TCP(6) 또는 UDP(17)인지 확인.
+  - IPv4 Fragment Offset(`data[20..21]`의 하위 13비트)이 0이 아니면 포트 추출하지 않음.
+  - 캡처 길이 및 IPv4 `totalLength`로 포트 4바이트를 읽을 수 있는지 확인.
+  - 네트워크 바이트 순서로 두 바이트씩 결합해 Source Port와 Destination Port 추출.
+- `hasPorts == 1`이면 ListView의 Source/Destination을 `IP:PORT`로 표시하고, 아니라면 포트 없이 `IP`만 표시.
+- 실제 GUI 캡처에서 TCP `147.92.146.129:443 -> 192.168.53.38:62119`, UDP `192.168.53.73:53754 -> 239.255.255.250:1900` 등의 형태가 나타남. (실제 캡처 예시이며 서버/서비스 식별을 확정하는 증거는 아님.)
+- 관찰된 속도: 약 **3초 동안 약 600행**이 화면에 추가됨(사용자 관찰치). 전체 패킷 처리량·최대 성능을 벤치마크한 수치는 아님.
+
+### 파서 함수 목록 (현재 대화에서 확인한 범위)
+
+```c
+int is_ipv4_packet(const unsigned char *data, unsigned int length);
+int parse_ipv4_addresses(const unsigned char *data, unsigned int length,
+                         unsigned char source[4], unsigned char destination[4]);
+int get_ipv4_protocol(const unsigned char *data, unsigned int length);
+int parse_transport_ports(const unsigned char *data, unsigned int length,
+                          unsigned short *sourcePort, unsigned short *destinationPort);
+```
+
+- `packet_parser.h`에는 선언, `parser.c`에는 구현, `gui.c`에는 호출 코드를 둠.
+- 실제 빌드에서 `LNK2019 parse_ipv4_addresses` 오류가 발생했으며 GUI 빌드에 `parser.c`를 포함한 뒤 정상 동작함. 새 함수를 추가할 때 링크 대상 소스 확인이 필요.
+- C 함수 **정의**는 마지막에 `}`를 사용하며 `};`가 필요 없음. 구조체 선언은 `};` 사용.
+- Windows 헤더 충돌 발생 경험: `winsock2.h`를 `windows.h`보다 먼저 포함하는 순서가 중요하며, 헤더별 의존성 관리가 필요.
+
+## 23. 현재 화면과 데이터 흐름
+
+```text
+사용자: 네트워크 어댑터 선택 → Start Capture
+  ↓
+Npcap: pcap_open_live / pcap_next_ex
+  ↓
+capture_thread: IPv4 파싱 + 프로토콜 + 포트 분석
+  ↓
+PacketRow { source, destination, protocol }
+  ↓
+PostMessageW(WM_PACKET_RECEIVED)
+  ↓
+GUI WindowProc → add_packet_row → ListView → free(PacketRow)
+
+Stop Capture → running=false → pcap_breakloop
+  ↓
+스레드 종료 확인 → 대기 메시지 정리 → 핸들/컨텍스트 정리
+```
+
+- 주요 표시 결과(예시):
+
+```text
+No.  Source                  Destination                Protocol
+1    147.92.146.129:443      192.168.53.38:62119       TCP
+2    192.168.53.73:53754    239.255.255.250:1900      UDP
+```
+
+## 24. 빌드 및 실행 참고
+
+- 개발 환경: Windows 11, MSVC(`/std:c17`), VS Code, Npcap 및 SDK 1.17.
+- 콘솔 타깃: `PacketScope.exe`; GUI 타깃: `PacketScopeGUI.exe`.
+- 프로젝트 기존 `build.cmd`의 GUI 빌드에는 최소한 `gui_main.c`, `gui.c`, `capture.c`, **`parser.c`**, Npcap 라이브러리 및 `comctl32.lib`가 연결되어야 함. 실제 옵션/경로는 해당 파일을 기준으로 사용하며 이 문서는 새 빌드 명령을 임의로 고정하지 않음.
+- 실행 시 Npcap DLL 검색 경로에 `C:\Windows\System32\Npcap`이 필요할 수 있음. 실행 실패 시 PATH 및 DLL 의존성을 점검.
+- 캡처 결과에 보이는 IP/포트는 실제 통신 정보이므로 캡처 화면이나 로그를 공개할 때 민감한 주소·호스트 정보를 확인할 것.
+
+## 25. 알려진 한계 및 안정성 점검 목록
+
+1. **IPv4만 GUI 표시**: IPv6/ARP는 기존 콘솔의 EtherType 식별과 별개로 GUI 상세 분석이 없음.
+2. **링크 계층 가정**: `DLT_EN10MB`이더라도 VLAN 태그가 있는 Ethernet 프레임은 현재 고정 오프셋 IPv4 파서에서 처리하지 않음.
+3. **IPv4 길이·유효성**: IPv4 Total Length가 IHL보다 짧은 경우, 짧은 TCP/UDP 헤더, 잘못된 헤더/체크섬 등 정밀 검증은 추후 보강 필요. 특히 `parse_ipv4_addresses()`/`get_ipv4_protocol()`에도 IPv4 Total Length 검증을 일관되게 적용하는 것이 바람직.
+4. **단편화**: 비첫 번째 단편에서는 포트 추출을 생략하도록 처리함. 단편 재조립은 미지원.
+5. **메시지 부하**: `pendingPackets` 100개 제한은 무한 대기를 줄이기 위한 초기 장치이며, 빠른 트래픽에서 화면 표시 패킷이 일부 누락될 수 있음. 총 ListView 행 수 제한, 드롭 카운트, 배치 처리 등은 미구현.
+6. **종료 예외**: `RegisterWaitForSingleObject`/`UnregisterWaitEx`, 타이머 등록 실패 및 콜백 게시 실패 등 예외 경로를 재점검할 필요가 있음. 일반적인 Stop 동작은 실행 확인했으나 모든 레이스·오류 경로의 안정성을 보증하지 않음.
+7. **디버깅**: VS Code에서 창 종료와 디버거 세션 종료의 관계는 환경별로 추가 확인 필요. 사용자가 우선순위를 낮춰 보류함.
+8. **전체 검증 범위**: IP·TCP·UDP 포트 표시까지 실행 화면으로 확인했으나, IPv6/ARP 파싱 및 다양한 비정상 패킷에 대한 테스트는 하지 않음.
+
+## 26. 다음 개발 목표 (2026-11-09 기준)
+
+- [x] Npcap 어댑터 선택 및 실시간 캡처
+- [x] Win32 ListView 실시간 표 출력
+- [x] IPv4 Source/Destination
+- [x] IPv4 TCP/UDP/ICMP 프로토콜 이름 분류
+- [x] TCP/UDP Source/Destination Port
+- [ ] TCP 플래그(SYN/ACK/FIN/RST) 및 헤더 길이 분석
+- [ ] IPv6 패킷 주소 및 Next Header 분석
+- [ ] ARP 송신자/대상 주소 분석 및 GUI 출력
+- [ ] 패킷 상세 보기(선택 행과 원본 바이트 연결)
+- [ ] 종료 예외·부하·프레임 유효성 검사 강화
+- [ ] 필터, 일시정지/재개, 로그/PCAP 저장 등 사용성 확장
