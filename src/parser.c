@@ -183,3 +183,53 @@ int parse_transport_ports(
 
     return 1;
 }
+
+int parse_ethernet_header(
+    const unsigned char *data,
+    unsigned int length,
+    unsigned char destination[6],
+    unsigned char source[6],
+    unsigned short *etherType   
+)
+{   
+    // 1. NULL 검사
+
+    if(destination == NULL || source == NULL || etherType == NULL) {
+        return 0;
+    }
+
+    if(data == NULL){
+        return 0;
+    }
+
+    // 2. 최소 길이 검사
+    if(length < 14) {
+        return 0;
+    }
+    // 3. Destination MAC 추출
+    for(int i=0;i<6;i++){
+        destination[i] = data[i];
+    }
+
+    // 4. Source MAC 추출
+    for(int i=0;i<6;i++){
+        source[i] = data[i+6];
+    }
+
+    // 5. EtherType 추출 (다음 미션)
+    *etherType = (data[12] << 8) | data[13];
+
+    return 1;
+}
+
+void print_mac_address(const unsigned char mac[6])
+{
+    if(mac == NULL) {
+        return;
+    }
+    // 직접 구현
+    for(int i=0;i<6;i++){
+        if(i==5){printf("%02X", mac[i]); break;}
+        printf("%02X:", mac[i]);
+    }
+}
