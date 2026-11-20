@@ -30,4 +30,14 @@ int parse_transport_ports(
     unsigned short *destinationPort
 );
 
+int parse_ethernet_header(
+    const unsigned char *data,
+    unsigned int length,
+    unsigned char destination[6],
+    unsigned char source[6],
+    unsigned short *etherType
+);
+
+void print_mac_address(const unsigned char mac[6]);
+
 #endif

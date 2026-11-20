@@ -6,6 +6,12 @@ void analyze_packet(
     const struct pcap_pkthdr *header,
     const u_char *data)
 {
+
+    if (handle == NULL || header == NULL || data == NULL)
+    {
+        return;
+    }
+
     printf("Captured: %u bytes\n", header->caplen);
     printf("Original: %u bytes\n", header->len);
 
@@ -14,31 +20,48 @@ void analyze_packet(
         printf("%02X ", (unsigned int)data[i]);
     }
     printf("\n");
-    if (pcap_datalink(handle) == DLT_EN10MB)
+
+    if (pcap_datalink(handle) != DLT_EN10MB)
     {
-        if (header->caplen >= 14)
-        {
-            unsigned int etherType = ((unsigned int)data[12] << 8) | data[13];
-            printf("EtherType: 0x%04X\n", etherType);
-            if (etherType == 0x0800)
-            {
-                printf("Protocol : IPv4\n");
-            }
-            else if (etherType == 0x0806)
-            {
-                printf("Protocol : ARP\n");
-            }
-            else if (etherType == 0x86DD)
-            {
-                printf("Protocol : IPv6\n");
-            }
-            else
-            {
-                printf("Protocol : Unknown\n");
-            }
-        }
+        return;
     }
-};
+
+    unsigned char destination[6];
+    unsigned char source[6];
+    unsigned short etherType;
+
+    if (parse_ethernet_header(data, header->caplen, destination, source, &etherType) != 1)
+    {
+        return;
+    }
+
+    printf("Destination MAC: ");
+    print_mac_address(destination);
+    printf("\n");
+
+    printf("Source MAC: ");
+    print_mac_address(source);
+    printf("\n");
+
+    printf("EtherType: 0x%04X\n", (unsigned int)etherType);
+
+    if (etherType == 0x0800)
+    {
+        printf("Protocol : IPv4\n");
+    }
+    else if (etherType == 0x0806)
+    {
+        printf("Protocol : ARP\n");
+    }
+    else if (etherType == 0x86DD)
+    {
+        printf("Protocol : IPv6\n");
+    }
+    else
+    {
+        printf("Protocol : Unknown\n");
+    }
+}
 
 int is_ipv4_packet(const unsigned char *data, unsigned int length)
 {
@@ -49,7 +72,7 @@ int is_ipv4_packet(const unsigned char *data, unsigned int length)
 
     unsigned int etherType = ((unsigned int)data[12] << 8) | data[13];
     return etherType == 0x0800;
-};
+}
 
 int parse_ipv4_addresses(
     const unsigned char *data,
@@ -92,7 +115,7 @@ int parse_ipv4_addresses(
     }
 
     return 1;
-};
+}
 
 int get_ipv4_protocol(
     const unsigned char *data,
@@ -117,7 +140,7 @@ int get_ipv4_protocol(
     }
 
     return data[23];
-};
+}
 
 int parse_transport_ports(
     const unsigned char *data,
@@ -189,31 +212,35 @@ int parse_ethernet_header(
     unsigned int length,
     unsigned char destination[6],
     unsigned char source[6],
-    unsigned short *etherType   
-)
-{   
+    unsigned short *etherType)
+{
     // 1. NULL 검사
 
-    if(destination == NULL || source == NULL || etherType == NULL) {
+    if (destination == NULL || source == NULL || etherType == NULL)
+    {
         return 0;
     }
 
-    if(data == NULL){
+    if (data == NULL)
+    {
         return 0;
     }
 
     // 2. 최소 길이 검사
-    if(length < 14) {
+    if (length < 14)
+    {
         return 0;
     }
     // 3. Destination MAC 추출
-    for(int i=0;i<6;i++){
+    for (int i = 0; i < 6; i++)
+    {
         destination[i] = data[i];
     }
 
     // 4. Source MAC 추출
-    for(int i=0;i<6;i++){
-        source[i] = data[i+6];
+    for (int i = 0; i < 6; i++)
+    {
+        source[i] = data[i + 6];
     }
 
     // 5. EtherType 추출 (다음 미션)
@@ -224,12 +251,18 @@ int parse_ethernet_header(
 
 void print_mac_address(const unsigned char mac[6])
 {
-    if(mac == NULL) {
+    if (mac == NULL)
+    {
         return;
     }
     // 직접 구현
-    for(int i=0;i<6;i++){
-        if(i==5){printf("%02X", mac[i]); break;}
+    for (int i = 0; i < 6; i++)
+    {
+        if (i == 5)
+        {
+            printf("%02X", mac[i]);
+            break;
+        }
         printf("%02X:", mac[i]);
     }
 }
